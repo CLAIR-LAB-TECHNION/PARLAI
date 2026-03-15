@@ -1,0 +1,11 @@
+name: parlai
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - jupyterlab
+  - ipykernel
+  - pip
+  - pip:
+    - gymnasium
+
