@@ -74,8 +74,6 @@ def visualize_caldera():
     ax.set_ylabel("Y")
     return fig, ax
 
-
 if __name__ == "__main__":
     visualize_caldera()
     plt.show()
-
