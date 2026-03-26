@@ -46,6 +46,7 @@ class CalderaEnv(gym.Env):
         dim_x: int = 100,
         dim_y: int = 100,
         delta: int = 10,
+        initial_position: Tuple[int, int] = (0, 0),
         max_energy: int = 20,
     ):
         self.dim_x = dim_x
@@ -64,7 +65,7 @@ class CalderaEnv(gym.Env):
                 raise ValueError(
                     "Each pit entry must be a BivariateNormalStruct with x, y, sigmax, sigmay, mux, and muy"
                 )
-
+        
         self.x_coords = np.arange(0, self.dim_x + 1, self.delta)
         self.y_coords = np.arange(0, self.dim_y + 1, self.delta)
         self.num_cols = len(self.x_coords)
@@ -72,6 +73,15 @@ class CalderaEnv(gym.Env):
 
         _, _, self.depth_map = self.generate_caldera_map()
         self.value_map = -self.depth_map
+       
+        # the vehicle can move in 4 directions or sample the current cell
+        # action 0: move up, 1: move down, 2: move left, 3: move right, 4: sample
+        self.action_space = spaces.Discrete(5)
+
+        # Initialize the position, energy, and sampled cells
+        self.position = initial_position
+        self.energy = self.max_energy
+        self.sampled_cells: Set[Tuple[int, int]] = set()
 
         self.observation_space = spaces.Dict(
             {
@@ -85,11 +95,6 @@ class CalderaEnv(gym.Env):
                 "sampled_here": spaces.Discrete(2),
             }
         )
-        self.action_space = spaces.Discrete(5)
-
-        self.position = np.array([0, 0], dtype=np.int64)
-        self.energy = self.max_energy
-        self.sampled_cells: Set[Tuple[int, int]] = set()
 
     def _get_obs(self):
         sampled_here = int(tuple(self.position) in self.sampled_cells)
@@ -134,7 +139,7 @@ class CalderaEnv(gym.Env):
 
         terminated = self.energy <= 0
         truncated = False
-        return self._get_obs(), reward, terminated, truncated, info
+        return self._get_obs(), reward, terminated, truncated, _
 
     def caldera_sim_function(self, x, y):
         x = x / (self.dim_x / 10.0)
@@ -155,6 +160,20 @@ class CalderaEnv(gym.Env):
         x, y, z = self.generate_caldera_map()
         fig, ax = plt.subplots(figsize=(8, 6))
         contour = ax.contourf(x, y, z, levels=20, cmap="viridis")
+
+        row, col = map(int, self.position)
+        if 0 <= row < z.shape[0] and 0 <= col < z.shape[1]:
+            vehicle_value = z[row, col]
+            if not np.isneginf(vehicle_value):
+                ax.scatter(
+                    x[row, col],
+                    y[row, col],
+                    marker="x",
+                    s=120,
+                    c="black",
+                    linewidths=2,
+                )
+
         fig.colorbar(contour, ax=ax, label="Relative depth")
         ax.set_title("Caldera Depth Map")
         ax.set_xlabel("X")
@@ -167,6 +186,8 @@ def main():
     # the x and y dimensions of our caldera
     dim_x = 100
     dim_y = 100
+    initial_position = (0.5, 0.5)  # Starting at the center of the grid
+
 
     caldera_env = CalderaEnv(
         pit_params=DEFAULT_PIT_PARAMS,
@@ -174,6 +195,7 @@ def main():
         dim_x=dim_x,
         dim_y=dim_y,
         delta=delta,
+        initial_position=initial_position
     )
     fig, _ = caldera_env.visualize_caldera()
     plt.show()
