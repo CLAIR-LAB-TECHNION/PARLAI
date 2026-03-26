@@ -111,6 +111,7 @@ class CalderaEnv(gym.Env):
         self.energy = self.max_energy
         self.sampled_cells: Set[Tuple[int, int]] = set()
         self.surface_vehicles: Dict[Tuple[int, int], int] = {}
+        self.agent_path = [tuple(map(int, self.position))]
 
         self.observation_space = spaces.Dict(
             {
@@ -223,11 +224,18 @@ class CalderaEnv(gym.Env):
             "sampled_here": sampled_here,
         }
 
+    def _record_agent_position(self) -> None:
+        current_position = tuple(map(int, self.position))
+        if current_position != self.agent_path[-1]:
+            self.agent_path.append(current_position)
+
+    
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self.position = self.initial_position.copy()
         self.energy = self.max_energy
         self.sampled_cells = set()
+        self.agent_path = [tuple(map(int, self.position))]
         info = {}
         return self._get_obs(), info
 
@@ -244,6 +252,12 @@ class CalderaEnv(gym.Env):
 
         return validated_probabilities
 
+    def avoid_obstacle(self, next_position: np.ndarray) -> np.ndarray:
+        proposed_position = tuple(map(int, next_position))
+        if self.is_cell_occupied_by_vehicle(proposed_position, include_agent=False):
+            return self.position.copy()
+        return next_position
+
     def perform_move(self, action: int) -> np.ndarray:
         x_pos, y_pos = self.position
 
@@ -256,7 +270,8 @@ class CalderaEnv(gym.Env):
         elif action == 3:
             x_pos = min(int(self.max_position[0]), x_pos + self.delta)
 
-        return np.array([x_pos, y_pos], dtype=np.int64)
+        next_position = np.array([x_pos, y_pos], dtype=np.int64)
+        return self.avoid_obstacle(next_position)
 
     def perform_stochastic_move(
         self,
@@ -308,6 +323,7 @@ class CalderaEnv(gym.Env):
             )
         )
 
+        self._record_agent_position()
         self.energy -= 1
 
         terminated = self.energy <= 0
@@ -330,10 +346,15 @@ class CalderaEnv(gym.Env):
         return x_grid, y_grid, z
 
 
-    def visualize_caldera(self):
+    def visualize_caldera(
+        self,
+        agent_path: Optional[Sequence[Tuple[int, int]]] = None,
+    ):
         x, y, z = self.generate_caldera_map()
         fig, ax = plt.subplots(figsize=(8, 6))
         contour = ax.contourf(x, y, z, levels=20, cmap="viridis")
+
+        path_to_plot = self.agent_path if agent_path is None else agent_path
 
         other_vehicle_locations = self.get_other_vehicle_locations()
         if other_vehicle_locations:
@@ -362,6 +383,18 @@ class CalderaEnv(gym.Env):
                     linewidths=2,
                 )
 
+        if path_to_plot:
+            path_x, path_y = zip(*path_to_plot)
+            ax.plot(
+                path_x,
+                path_y,
+                color="white",
+                linewidth=2,
+                linestyle="-",
+                alpha=0.9,
+                zorder=10,
+            )
+
         fig.colorbar(contour, ax=ax, label="Relative depth")
         ax.set_title("Caldera Depth Map")
         ax.set_xlabel("X")
@@ -369,71 +402,6 @@ class CalderaEnv(gym.Env):
         return fig, ax
     
 
-def _run_interactive_demo(caldera_env: CalderaEnv, delta: int) -> None:
-    current_depth = caldera_env.get_depth_value(tuple(caldera_env.position))
-    caldera_env.add_vehicle((10, 10))
-    caldera_env.add_vehicle((10, 20), vehicle_size=2 * delta)
-    caldera_env.add_vehicle((10, 40), vehicle_size=400 * delta)
-
-    print(f"Current depth: {current_depth}")
-    print(f"Is (10, 10) occupied? {caldera_env.is_cell_occupied_by_vehicle((10, 10))}")
-    print(f"Is (20, 20) occupied? {caldera_env.is_cell_occupied_by_vehicle((20, 20))}")
-    print(
-        "Is the agent cell occupied by another vehicle? "
-        f"{caldera_env.is_cell_occupied_by_vehicle(tuple(caldera_env.position), include_agent=False)}"
-    )
-    print(
-        f"Is the agent cell occupied when including the agent? "
-        f"{caldera_env.is_cell_occupied_by_vehicle(tuple(caldera_env.position))}"
-    )
-
-    action_map = {
-        "0": 0,
-        "up": 0,
-        "1": 1,
-        "down": 1,
-        "2": 2,
-        "left": 2,
-        "3": 3,
-        "right": 3,
-        "4": 4,
-        "sample": 4,
-    }
-
-    plt.ion()
-    fig, _ = caldera_env.visualize_caldera()
-    plt.show(block=False)
-
-    while True:
-        user_action = input(
-            "Next action (0-4, up/down/left/right/sample, or q to quit): "
-        ).strip().lower()
-
-        if user_action in {"q", "quit", "exit"}:
-            break
-
-        if user_action not in action_map:
-            print("Invalid action. Use 0-4, up, down, left, right, sample, or q.")
-            continue
-
-        obs, reward, terminated, truncated, info = caldera_env.step(action_map[user_action])
-        current_depth = caldera_env.get_depth_value(tuple(caldera_env.position))
-
-        print(f"Step output: {(obs, reward, terminated, truncated, info)}")
-        print(f"Agent position: {tuple(obs['position'])}")
-        print(f"Current depth: {current_depth}")
-
-        plt.close(fig)
-        fig, _ = caldera_env.visualize_caldera()
-        plt.show(block=False)
-        plt.pause(0.001)
-
-        if terminated or truncated:
-            print("Episode finished.")
-            break
-
-    plt.ioff()
-    plt.show()
 
 
 def main():
@@ -451,7 +419,43 @@ def main():
         delta=delta,
         initial_position=initial_position
     )
-    _run_interactive_demo(caldera_env, delta)
+    current_depth = caldera_env.get_depth_value(tuple(caldera_env.position))
+    caldera_env.add_vehicle((10, 10))
+    caldera_env.add_vehicle((10, 20), vehicle_size=2 * delta)
+    caldera_env.add_vehicle((10, 40), vehicle_size=4 * delta)
+
+    print(f"Current depth: {current_depth}")
+    print(f"Is (10, 10) occupied? {caldera_env.is_cell_occupied_by_vehicle((10, 10))}")
+    print(f"Is (20, 20) occupied? {caldera_env.is_cell_occupied_by_vehicle((20, 20))}")
+    print(
+        "Is the agent cell occupied by another vehicle? "
+        f"{caldera_env.is_cell_occupied_by_vehicle(tuple(caldera_env.position), include_agent=False)}"
+    )
+    print(
+        f"Is the agent cell occupied when including the agent? "
+        f"{caldera_env.is_cell_occupied_by_vehicle(tuple(caldera_env.position))}"
+    )
+
+    
+    i = 0
+    path = [caldera_env.position.copy()]
+    while i < 100:
+        next_action = np.random.randint(0, 5)
+        obs, reward, terminated, truncated, info = caldera_env.step(next_action)
+
+        current_depth = caldera_env.get_depth_value(tuple(caldera_env.position))
+        path.append(caldera_env.position.copy())
+        print(f"Step output: {(obs, reward, terminated, truncated, info)}")
+        print(f"Agent position: {tuple(obs['position'])}")
+        print(f"Current depth: {current_depth}")
+        i += 1        
+        if terminated or truncated:
+            print("Episode finished.")
+            break
+
+    fig, _ = caldera_env.visualize_caldera(agent_path=path)
+    plt.show()
+
 
 
 def main_stochastic():
@@ -470,9 +474,8 @@ def main_stochastic():
         stochastic_movement=True,
         move_success_probabilities=(0.8, 0.8, 0.8, 0.8),
     )
-    _run_interactive_demo(caldera_env, delta)
 
 
 
 if __name__ == "__main__":
-    main_stochastic()
+    main()
