@@ -1,5 +1,5 @@
 from dataclasses import dataclass, replace
-from typing import Any, Sequence, Set, Tuple
+from typing import Any, Callable, Sequence, Set, Tuple
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -38,6 +38,22 @@ DEFAULT_PIT_PARAMS = (
 DEFAULT_PIT_WEIGHTS = (16000.0, 22000.0, 18000.0)
 
 
+def default_reward_function(
+    env,
+    action: int,
+    position: Tuple[int, int],
+    is_new_sample: bool,
+) -> float:
+    if action != 4:
+        return -0.1
+
+    if not is_new_sample:
+        return -0.5
+
+    row, col = env._position_to_indices(position)
+    return float(env.value_map[row, col])
+
+
 class CalderaEnv(gym.Env):
     def __init__(
         self,
@@ -48,11 +64,13 @@ class CalderaEnv(gym.Env):
         delta: int = 10,
         initial_position: Tuple[int, int] = (0, 0),
         max_energy: int = 20,
+        reward_function: Callable[..., float] = default_reward_function,
     ):
         self.dim_x = dim_x
         self.dim_y = dim_y
         self.delta = delta
         self.max_energy = max_energy
+        self.reward_function = reward_function
 
         self.pit_params = list(pit_params)
         self.pit_weights = list(pit_weights)
@@ -70,6 +88,7 @@ class CalderaEnv(gym.Env):
         self.y_coords = np.arange(0, self.dim_y + 1, self.delta)
         self.num_cols = len(self.x_coords)
         self.num_rows = len(self.y_coords)
+        self.max_position = np.array([self.x_coords[-1], self.y_coords[-1]], dtype=np.int64)
 
         _, _, self.depth_map = self.generate_caldera_map()
         self.value_map = -self.depth_map
@@ -78,8 +97,9 @@ class CalderaEnv(gym.Env):
         # action 0: move up, 1: move down, 2: move left, 3: move right, 4: sample
         self.action_space = spaces.Discrete(5)
 
-        # Initialize the position, energy, and sampled cells
-        self.position = initial_position
+        # Position is stored as (x, y) in the same coordinate scale as the plotted grid.
+        self.initial_position = self._validate_position(initial_position)
+        self.position = self.initial_position.copy()
         self.energy = self.max_energy
         self.sampled_cells: Set[Tuple[int, int]] = set()
 
@@ -87,7 +107,7 @@ class CalderaEnv(gym.Env):
             {
                 "position": spaces.Box(
                     low=np.array([0, 0], dtype=np.int64),
-                    high=np.array([self.num_rows - 1, self.num_cols - 1], dtype=np.int64),
+                    high=self.max_position.copy(),
                     shape=(2,),
                     dtype=np.int64,
                 ),
@@ -95,6 +115,32 @@ class CalderaEnv(gym.Env):
                 "sampled_here": spaces.Discrete(2),
             }
         )
+
+        if not callable(self.reward_function):
+            raise ValueError("reward_function must be callable")
+
+    def _validate_position(self, position: Tuple[int, int]) -> np.ndarray:
+        x_pos, y_pos = map(int, position)
+
+        if x_pos < 0 or x_pos > self.max_position[0] or x_pos % self.delta != 0:
+            raise ValueError(
+                f"x position must be on the grid between 0 and {self.max_position[0]}"
+            )
+        if y_pos < 0 or y_pos > self.max_position[1] or y_pos % self.delta != 0:
+            raise ValueError(
+                f"y position must be on the grid between 0 and {self.max_position[1]}"
+            )
+
+        return np.array([x_pos, y_pos], dtype=np.int64)
+
+    def _position_to_indices(self, position: np.ndarray) -> Tuple[int, int]:
+        x_pos, y_pos = map(int, position)
+        return y_pos // self.delta, x_pos // self.delta
+
+    def get_depth_value(self, cell: Tuple[int, int]) -> float:
+        validated_cell = self._validate_position(cell)
+        row, col = self._position_to_indices(validated_cell)
+        return float(self.depth_map[row, col])
 
     def _get_obs(self):
         sampled_here = int(tuple(self.position) in self.sampled_cells)
@@ -106,40 +152,51 @@ class CalderaEnv(gym.Env):
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
-        self.position = np.array([0, 0], dtype=np.int64)
+        self.position = self.initial_position.copy()
         self.energy = self.max_energy
         self.sampled_cells = set()
+        info = {}
         return self._get_obs(), info
 
     def step(self, action: int):
         if not self.action_space.contains(action):
             raise ValueError(f"Invalid action: {action}")
 
-        reward = -0.1
-        row, col = self.position
+        x_pos, y_pos = self.position
 
         if action == 0:
-            row = max(0, row - 1)
+            y_pos = max(0, y_pos - self.delta)
         elif action == 1:
-            row = min(self.num_rows - 1, row + 1)
+            y_pos = min(int(self.max_position[1]), y_pos + self.delta)
         elif action == 2:
-            col = max(0, col - 1)
+            x_pos = max(0, x_pos - self.delta)
         elif action == 3:
-            col = min(self.num_cols - 1, col + 1)
-        elif action == 4:
-            cell = tuple(self.position)
-            if cell not in self.sampled_cells:
-                self.sampled_cells.add(cell)
-                reward = float(self.value_map[cell])
-            else:
-                reward = -0.5
+            x_pos = min(int(self.max_position[0]), x_pos + self.delta)
+        next_position = np.array([x_pos, y_pos], dtype=np.int64)
 
-        self.position = np.array([row, col], dtype=np.int64)
+        is_new_sample = False
+        if action == 4:
+            cell = tuple(next_position)
+            is_new_sample = cell not in self.sampled_cells
+            if is_new_sample:
+                self.sampled_cells.add(cell)
+
+        reward = float(
+            self.reward_function(
+                self,
+                action,
+                tuple(next_position),
+                is_new_sample,
+            )
+        )
+
+        self.position = next_position
         self.energy -= 1
 
         terminated = self.energy <= 0
         truncated = False
-        return self._get_obs(), reward, terminated, truncated, _
+        info = {}
+        return self._get_obs(), reward, terminated, truncated, info
 
     def caldera_sim_function(self, x, y):
         x = x / (self.dim_x / 10.0)
@@ -161,15 +218,15 @@ class CalderaEnv(gym.Env):
         fig, ax = plt.subplots(figsize=(8, 6))
         contour = ax.contourf(x, y, z, levels=20, cmap="viridis")
 
-        row, col = map(int, self.position)
+        row, col = self._position_to_indices(self.position)
         if 0 <= row < z.shape[0] and 0 <= col < z.shape[1]:
             vehicle_value = z[row, col]
             if not np.isneginf(vehicle_value):
                 ax.scatter(
-                    x[row, col],
-                    y[row, col],
-                    marker="x",
-                    s=120,
+                    self.position[0],
+                    self.position[1],
+                    marker="s",
+                    s=320,
                     c="black",
                     linewidths=2,
                 )
@@ -186,8 +243,7 @@ def main():
     # the x and y dimensions of our caldera
     dim_x = 100
     dim_y = 100
-    initial_position = (0.5, 0.5)  # Starting at the center of the grid
-
+    initial_position = (60, 20)  
 
     caldera_env = CalderaEnv(
         pit_params=DEFAULT_PIT_PARAMS,
@@ -197,6 +253,8 @@ def main():
         delta=delta,
         initial_position=initial_position
     )
+    current_depth = caldera_env.get_depth_value(tuple(caldera_env.position))
+    print(current_depth)
     fig, _ = caldera_env.visualize_caldera()
     plt.show()
 
