@@ -66,6 +66,8 @@ class CalderaEnv(gym.Env):
         max_energy: int = 20,
         reward_function: Callable[..., float] = default_reward_function,
         vehicle_marker_size: int = 320,
+        stochastic_movement: bool = False,
+        move_success_probabilities: Sequence[float] = (1.0, 1.0, 1.0, 1.0),
     ):
         self.dim_x = dim_x
         self.dim_y = dim_y
@@ -73,6 +75,10 @@ class CalderaEnv(gym.Env):
         self.max_energy = max_energy
         self.reward_function = reward_function
         self.vehicle_marker_size = vehicle_marker_size
+        self.stochastic_movement = stochastic_movement
+        self.move_success_probabilities = self._validate_success_probabilities(
+            move_success_probabilities
+        )
 
         self.pit_params = list(pit_params)
         self.pit_weights = list(pit_weights)
@@ -162,6 +168,42 @@ class CalderaEnv(gym.Env):
         marker_size = self.vehicle_marker_size if vehicle_size is None else vehicle_size
         self.surface_vehicles[validated_position] = self._validate_vehicle_marker_size(marker_size)
 
+    def _cell_is_inside_vehicle(
+        self,
+        cell: Tuple[int, int],
+        vehicle_position: Tuple[int, int],
+        vehicle_size: float,
+    ) -> bool:
+        cell_x, cell_y = cell
+        vehicle_x, vehicle_y = vehicle_position
+        half_size = vehicle_size / 2.0
+
+        x_min = vehicle_x - half_size
+        x_max = vehicle_x + half_size
+        y_min = vehicle_y - half_size
+        y_max = vehicle_y + half_size
+
+        return x_min <= cell_x < x_max and y_min <= cell_y < y_max
+
+    def is_cell_occupied_by_vehicle(
+        self,
+        cell: Tuple[int, int],
+        include_agent: bool = True,
+    ) -> bool:
+        validated_cell = tuple(map(int, self._validate_position(cell)))
+
+        if include_agent and self._cell_is_inside_vehicle(
+            validated_cell,
+            tuple(map(int, self.position)),
+            self.vehicle_marker_size,
+        ):
+            return True
+
+        return any(
+            self._cell_is_inside_vehicle(validated_cell, vehicle_position, vehicle_size)
+            for vehicle_position, vehicle_size in self.surface_vehicles.items()
+        )
+
 
     def get_other_vehicle_locations(self) -> Tuple[Tuple[int, int], ...]:
         agent_position = tuple(map(int, self.position))
@@ -189,10 +231,20 @@ class CalderaEnv(gym.Env):
         info = {}
         return self._get_obs(), info
 
-    def step(self, action: int):
-        if not self.action_space.contains(action):
-            raise ValueError(f"Invalid action: {action}")
+    def _validate_success_probabilities(
+        self,
+        success_probabilities: Sequence[float],
+    ) -> Tuple[float, float, float, float]:
+        if len(success_probabilities) != 4:
+            raise ValueError("success_probabilities must contain exactly 4 values")
 
+        validated_probabilities = tuple(float(probability) for probability in success_probabilities)
+        if any(probability < 0.0 or probability > 1.0 for probability in validated_probabilities):
+            raise ValueError("each success probability must be between 0 and 1")
+
+        return validated_probabilities
+
+    def perform_move(self, action: int) -> np.ndarray:
         x_pos, y_pos = self.position
 
         if action == 0:
@@ -203,11 +255,46 @@ class CalderaEnv(gym.Env):
             x_pos = max(0, x_pos - self.delta)
         elif action == 3:
             x_pos = min(int(self.max_position[0]), x_pos + self.delta)
-        next_position = np.array([x_pos, y_pos], dtype=np.int64)
+
+        return np.array([x_pos, y_pos], dtype=np.int64)
+
+    def perform_stochastic_move(
+        self,
+        action: int,
+        success_probabilities: Sequence[float],
+    ) -> np.ndarray:
+        if action not in {0, 1, 2, 3}:
+            raise ValueError("perform_stochastic_move only supports movement actions 0-3")
+
+        validated_probabilities = self._validate_success_probabilities(success_probabilities)
+        right_turn_action = {
+            0: 3,
+            3: 1,
+            1: 2,
+            2: 0,
+        }
+
+        if np.random.random() < validated_probabilities[action]:
+            return self.perform_move(action)
+
+        return self.perform_move(right_turn_action[action])
+
+    def step(self, action: int):
+        if not self.action_space.contains(action):
+            raise ValueError(f"Invalid action: {action}")
+
+        if action != 4:
+            if self.stochastic_movement:
+                self.position = self.perform_stochastic_move(
+                    action,
+                    self.move_success_probabilities,
+                )
+            else:
+                self.position = self.perform_move(action)
 
         is_new_sample = False
         if action == 4:
-            cell = tuple(next_position)
+            cell = tuple(self.position)
             is_new_sample = cell not in self.sampled_cells
             if is_new_sample:
                 self.sampled_cells.add(cell)
@@ -216,12 +303,11 @@ class CalderaEnv(gym.Env):
             self.reward_function(
                 self,
                 action,
-                tuple(next_position),
+                tuple(self.position),
                 is_new_sample,
             )
         )
 
-        self.position = next_position
         self.energy -= 1
 
         terminated = self.energy <= 0
@@ -283,6 +369,73 @@ class CalderaEnv(gym.Env):
         return fig, ax
     
 
+def _run_interactive_demo(caldera_env: CalderaEnv, delta: int) -> None:
+    current_depth = caldera_env.get_depth_value(tuple(caldera_env.position))
+    caldera_env.add_vehicle((10, 10))
+    caldera_env.add_vehicle((10, 20), vehicle_size=2 * delta)
+    caldera_env.add_vehicle((10, 40), vehicle_size=400 * delta)
+
+    print(f"Current depth: {current_depth}")
+    print(f"Is (10, 10) occupied? {caldera_env.is_cell_occupied_by_vehicle((10, 10))}")
+    print(f"Is (20, 20) occupied? {caldera_env.is_cell_occupied_by_vehicle((20, 20))}")
+    print(
+        "Is the agent cell occupied by another vehicle? "
+        f"{caldera_env.is_cell_occupied_by_vehicle(tuple(caldera_env.position), include_agent=False)}"
+    )
+    print(
+        f"Is the agent cell occupied when including the agent? "
+        f"{caldera_env.is_cell_occupied_by_vehicle(tuple(caldera_env.position))}"
+    )
+
+    action_map = {
+        "0": 0,
+        "up": 0,
+        "1": 1,
+        "down": 1,
+        "2": 2,
+        "left": 2,
+        "3": 3,
+        "right": 3,
+        "4": 4,
+        "sample": 4,
+    }
+
+    plt.ion()
+    fig, _ = caldera_env.visualize_caldera()
+    plt.show(block=False)
+
+    while True:
+        user_action = input(
+            "Next action (0-4, up/down/left/right/sample, or q to quit): "
+        ).strip().lower()
+
+        if user_action in {"q", "quit", "exit"}:
+            break
+
+        if user_action not in action_map:
+            print("Invalid action. Use 0-4, up, down, left, right, sample, or q.")
+            continue
+
+        obs, reward, terminated, truncated, info = caldera_env.step(action_map[user_action])
+        current_depth = caldera_env.get_depth_value(tuple(caldera_env.position))
+
+        print(f"Step output: {(obs, reward, terminated, truncated, info)}")
+        print(f"Agent position: {tuple(obs['position'])}")
+        print(f"Current depth: {current_depth}")
+
+        plt.close(fig)
+        fig, _ = caldera_env.visualize_caldera()
+        plt.show(block=False)
+        plt.pause(0.001)
+
+        if terminated or truncated:
+            print("Episode finished.")
+            break
+
+    plt.ioff()
+    plt.show()
+
+
 def main():
     delta = 10
     # the x and y dimensions of our caldera
@@ -298,16 +451,28 @@ def main():
         delta=delta,
         initial_position=initial_position
     )
-    current_depth = caldera_env.get_depth_value(tuple(caldera_env.position))
-    caldera_env.add_vehicle((10, 10))
-    caldera_env.add_vehicle((10, 20), vehicle_size=2 * delta)
-    caldera_env.add_vehicle((10, 40), vehicle_size=400 * delta)
+    _run_interactive_demo(caldera_env, delta)
 
-    print(current_depth)
-    fig, _ = caldera_env.visualize_caldera()
-    plt.show()
+
+def main_stochastic():
+    delta = 10
+    dim_x = 100
+    dim_y = 100
+    initial_position = (60, 20)
+
+    caldera_env = CalderaEnv(
+        pit_params=DEFAULT_PIT_PARAMS,
+        pit_weights=DEFAULT_PIT_WEIGHTS,
+        dim_x=dim_x,
+        dim_y=dim_y,
+        delta=delta,
+        initial_position=initial_position,
+        stochastic_movement=True,
+        move_success_probabilities=(0.8, 0.8, 0.8, 0.8),
+    )
+    _run_interactive_demo(caldera_env, delta)
 
 
 
 if __name__ == "__main__":
-    main()
+    main_stochastic()
