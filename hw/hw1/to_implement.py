@@ -1,5 +1,5 @@
 from dataclasses import dataclass, replace
-from typing import Any, Callable, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Optional, Sequence, Set, Tuple
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -65,12 +65,14 @@ class CalderaEnv(gym.Env):
         initial_position: Tuple[int, int] = (0, 0),
         max_energy: int = 20,
         reward_function: Callable[..., float] = default_reward_function,
+        vehicle_marker_size: int = 320,
     ):
         self.dim_x = dim_x
         self.dim_y = dim_y
         self.delta = delta
         self.max_energy = max_energy
         self.reward_function = reward_function
+        self.vehicle_marker_size = vehicle_marker_size
 
         self.pit_params = list(pit_params)
         self.pit_weights = list(pit_weights)
@@ -102,6 +104,7 @@ class CalderaEnv(gym.Env):
         self.position = self.initial_position.copy()
         self.energy = self.max_energy
         self.sampled_cells: Set[Tuple[int, int]] = set()
+        self.surface_vehicles: Dict[Tuple[int, int], int] = {}
 
         self.observation_space = spaces.Dict(
             {
@@ -118,6 +121,8 @@ class CalderaEnv(gym.Env):
 
         if not callable(self.reward_function):
             raise ValueError("reward_function must be callable")
+        if self.vehicle_marker_size <= 0:
+            raise ValueError("vehicle_marker_size must be positive")
 
     def _validate_position(self, position: Tuple[int, int]) -> np.ndarray:
         x_pos, y_pos = map(int, position)
@@ -137,10 +142,36 @@ class CalderaEnv(gym.Env):
         x_pos, y_pos = map(int, position)
         return y_pos // self.delta, x_pos // self.delta
 
+    def _validate_vehicle_marker_size(self, marker_size: int) -> int:
+        marker_size = int(marker_size)
+        if marker_size <= 0:
+            raise ValueError("vehicle marker size must be positive")
+        return marker_size
+
     def get_depth_value(self, cell: Tuple[int, int]) -> float:
         validated_cell = self._validate_position(cell)
         row, col = self._position_to_indices(validated_cell)
         return float(self.depth_map[row, col])
+
+    def add_vehicle(
+        self,
+        vehicle_position: Tuple[int, int],
+        vehicle_size: Optional[int] = None,
+    ) -> None:
+        validated_position = tuple(map(int, self._validate_position(vehicle_position)))
+        marker_size = self.vehicle_marker_size if vehicle_size is None else vehicle_size
+        self.surface_vehicles[validated_position] = self._validate_vehicle_marker_size(marker_size)
+
+
+    def get_other_vehicle_locations(self) -> Tuple[Tuple[int, int], ...]:
+        agent_position = tuple(map(int, self.position))
+        return tuple(
+            sorted(
+                vehicle_position
+                for vehicle_position in self.surface_vehicles
+                if vehicle_position != agent_position
+            )
+        )
 
     def _get_obs(self):
         sampled_here = int(tuple(self.position) in self.sampled_cells)
@@ -218,6 +249,20 @@ class CalderaEnv(gym.Env):
         fig, ax = plt.subplots(figsize=(8, 6))
         contour = ax.contourf(x, y, z, levels=20, cmap="viridis")
 
+        other_vehicle_locations = self.get_other_vehicle_locations()
+        if other_vehicle_locations:
+            vehicle_x, vehicle_y = zip(*other_vehicle_locations)
+            vehicle_sizes = [self.surface_vehicles[vehicle_position] for vehicle_position in other_vehicle_locations]
+            ax.scatter(
+                vehicle_x,
+                vehicle_y,
+                marker="s",
+                s=vehicle_sizes,
+                c="red",
+                edgecolors="white",
+                linewidths=1.5,
+            )
+
         row, col = self._position_to_indices(self.position)
         if 0 <= row < z.shape[0] and 0 <= col < z.shape[1]:
             vehicle_value = z[row, col]
@@ -226,7 +271,7 @@ class CalderaEnv(gym.Env):
                     self.position[0],
                     self.position[1],
                     marker="s",
-                    s=320,
+                    s=self.vehicle_marker_size,
                     c="black",
                     linewidths=2,
                 )
@@ -254,9 +299,14 @@ def main():
         initial_position=initial_position
     )
     current_depth = caldera_env.get_depth_value(tuple(caldera_env.position))
+    caldera_env.add_vehicle((10, 10))
+    caldera_env.add_vehicle((10, 20), vehicle_size=2 * delta)
+    caldera_env.add_vehicle((10, 40), vehicle_size=400 * delta)
+
     print(current_depth)
     fig, _ = caldera_env.visualize_caldera()
     plt.show()
+
 
 
 if __name__ == "__main__":
