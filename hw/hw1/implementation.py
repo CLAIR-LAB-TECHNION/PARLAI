@@ -16,9 +16,9 @@ from utils import (
 
 # Default parameters for the three pits in the caldera, along with their weights that control how deep they are.
 DEFAULT_PIT_PARAMS = (
-    BivariateNormalStruct(x=0.0, y=0.0, sigmax=1.6, sigmay=1.5, mux=2.0, muy=2.0),
-    BivariateNormalStruct(x=0.0, y=0.0, sigmax=1.8, sigmay=2.0, mux=5.0, muy=7.0),
-    BivariateNormalStruct(x=0.0, y=0.0, sigmax=1.7, sigmay=1.5, mux=8.0, muy=3.0),
+    BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.16, sigmay=0.15, mux=0.2, muy=0.2),
+    BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.18, sigmay=0.2, mux=0.5, muy=0.7),
+    BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.17, sigmay=0.15, mux=0.8, muy=0.3),
 )
 
 # The weights for each pit, controlling how deep they are relative to each other.
@@ -127,7 +127,7 @@ class CalderaEnv(gym.Env):
         self.stochastic = stochastic
         if self.stochastic:
             self.success_probabilities = (
-                (1.0, 1.0, 1.0, 1.0)
+                tuple(1.0 for _ in MOVEMENT_ACTIONS)
                 if success_probabilities is None
                 else success_probabilities
             )
@@ -142,8 +142,8 @@ class CalderaEnv(gym.Env):
     # The function that computes the depth of the caldera at any given (x, y) coordinate by summing the contributions from all the pits, which are modeled as bivariate normal distributions. 
     # The depth is negative because we want deeper areas to have lower values.    
     def caldera_sim_function(self, x, y):
-        x = x / (self.dim_x / 10.0)
-        y = y / (self.dim_y / 10.0)
+        x = x / self.dim_x
+        y = y / self.dim_y
         z = np.zeros_like(x, dtype=float)
         for weight, params in zip(self.pit_weights, self.pit_params):
             z += weight * _bivariate_normal(replace(params, x=x, y=y))
@@ -199,6 +199,16 @@ class CalderaEnv(gym.Env):
         return any(
             is_cell_within_bounding_box(validated_cell, vehicle_position, vehicle_size)
             for vehicle_position, vehicle_size in self.surface_vehicles.items()
+        )
+
+    def get_other_vehicle_locations(self) -> Tuple[Tuple[int, int], ...]:
+        agent_position = tuple(map(int, self.position))
+        return tuple(
+            sorted(
+                vehicle_position
+                for vehicle_position in self.surface_vehicles
+                if vehicle_position != agent_position
+            )
         )
 
     # return the structure of the action space, according to the Gym API.    
@@ -324,8 +334,7 @@ class CalderaEnv(gym.Env):
         # return the observation, reward, terminated, truncated, and info as expected by Gym environments 
         return obs, reward, terminated, truncated, info
 
-    
-
+   
     def visualize_caldera(
         self,
         agent_path: Optional[Sequence[Tuple[int, int]]] = None,
@@ -336,14 +345,7 @@ class CalderaEnv(gym.Env):
 
         path_to_plot = self.agent_path if agent_path is None else agent_path
 
-        agent_position = tuple(map(int, self.position))
-        other_vehicle_locations = tuple(
-            sorted(
-                vehicle_position
-                for vehicle_position in self.surface_vehicles
-                if vehicle_position != agent_position
-            )
-        )
+        other_vehicle_locations = self.get_other_vehicle_locations()
         if other_vehicle_locations:
             vehicle_x, vehicle_y = zip(*other_vehicle_locations)
             vehicle_sizes = [self.surface_vehicles[vehicle_position] for vehicle_position in other_vehicle_locations]
