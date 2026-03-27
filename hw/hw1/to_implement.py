@@ -1,5 +1,5 @@
 from dataclasses import dataclass, replace
-from typing import Any, Callable, Dict, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -37,22 +37,35 @@ DEFAULT_PIT_PARAMS = (
 
 DEFAULT_PIT_WEIGHTS = (16000.0, 22000.0, 18000.0)
 
+NORTH = "NORTH"
+SOUTH = "SOUTH"
+WEST = "WEST"
+EAST = "EAST"
+SAMPLE = "SAMPLE"
 
-def default_reward_function(
+ACTION_NAMES = (NORTH, SOUTH, WEST, EAST, SAMPLE)
+ACTION_TO_INDEX = {action_name: index for index, action_name in enumerate(ACTION_NAMES)}
+MOVEMENT_ACTIONS = ACTION_NAMES[:-1]
+WRONG_TURN_ACTION = {
+    NORTH: EAST,
+    EAST: SOUTH,
+    SOUTH: WEST,
+    WEST: NORTH,
+}
+
+
+def exploration_reward_function(
     env,
-    action: int,
-    position: Tuple[int, int],
-    is_new_sample: bool,
+    action,
+    obs
 ) -> float:
-    if action != 4:
+    if action != SAMPLE:
         return -0.1
 
-    if not is_new_sample:
+    if obs["sampled_here"]:
         return -0.5
-
-    row, col = env._position_to_indices(position)
-    return float(env.value_map[row, col])
-
+    
+    return 1.0
 
 class CalderaEnv(gym.Env):
     def __init__(
@@ -63,9 +76,9 @@ class CalderaEnv(gym.Env):
         dim_y: int = 100,
         delta: int = 10,
         initial_position: Tuple[int, int] = (0, 0),
-        max_energy: int = 20,
-        reward_function: Callable[..., float] = default_reward_function,
-        vehicle_marker_size: int = 320,
+        max_energy: int = 200,
+        reward_function: Callable[..., float] = exploration_reward_function,
+        vehicle_size: Optional[int] = None,
         stochastic_movement: bool = False,
         move_success_probabilities: Sequence[float] = (1.0, 1.0, 1.0, 1.0),
     ):
@@ -74,7 +87,13 @@ class CalderaEnv(gym.Env):
         self.delta = delta
         self.max_energy = max_energy
         self.reward_function = reward_function
-        self.vehicle_marker_size = vehicle_marker_size
+        default_vehicle_size = max(1, int(self.dim_x / self.delta))
+        resolved_vehicle_size = (
+            default_vehicle_size
+            if vehicle_size is None
+            else vehicle_size
+        )
+        self.vehicle_size = self._validate_vehicle_size(resolved_vehicle_size)
         self.stochastic_movement = stochastic_movement
         self.move_success_probabilities = self._validate_success_probabilities(
             move_success_probabilities
@@ -101,8 +120,8 @@ class CalderaEnv(gym.Env):
         _, _, self.depth_map = self.generate_caldera_map()
         self.value_map = -self.depth_map
        
-        # the vehicle can move in 4 directions or sample the current cell
-        # action 0: move up, 1: move down, 2: move left, 3: move right, 4: sample
+        # The environment still exposes a discrete action space for Gym compatibility,
+        # but the implementation uses named actions internally.
         self.action_space = spaces.Discrete(5)
 
         # Position is stored as (x, y) in the same coordinate scale as the plotted grid.
@@ -128,8 +147,6 @@ class CalderaEnv(gym.Env):
 
         if not callable(self.reward_function):
             raise ValueError("reward_function must be callable")
-        if self.vehicle_marker_size <= 0:
-            raise ValueError("vehicle_marker_size must be positive")
 
     def _validate_position(self, position: Tuple[int, int]) -> np.ndarray:
         x_pos, y_pos = map(int, position)
@@ -149,11 +166,11 @@ class CalderaEnv(gym.Env):
         x_pos, y_pos = map(int, position)
         return y_pos // self.delta, x_pos // self.delta
 
-    def _validate_vehicle_marker_size(self, marker_size: int) -> int:
-        marker_size = int(marker_size)
-        if marker_size <= 0:
-            raise ValueError("vehicle marker size must be positive")
-        return marker_size
+    def _validate_vehicle_size(self, vehicle_size: int) -> int:
+        vehicle_size = int(vehicle_size)
+        if vehicle_size <= 0:
+            raise ValueError("vehicle size must be positive")
+        return vehicle_size
 
     def get_depth_value(self, cell: Tuple[int, int]) -> float:
         validated_cell = self._validate_position(cell)
@@ -166,8 +183,8 @@ class CalderaEnv(gym.Env):
         vehicle_size: Optional[int] = None,
     ) -> None:
         validated_position = tuple(map(int, self._validate_position(vehicle_position)))
-        marker_size = self.vehicle_marker_size if vehicle_size is None else vehicle_size
-        self.surface_vehicles[validated_position] = self._validate_vehicle_marker_size(marker_size)
+        resolved_vehicle_size = self.vehicle_size if vehicle_size is None else vehicle_size
+        self.surface_vehicles[validated_position] = self._validate_vehicle_size(resolved_vehicle_size)
 
     def _cell_is_inside_vehicle(
         self,
@@ -189,14 +206,14 @@ class CalderaEnv(gym.Env):
     def is_cell_occupied_by_vehicle(
         self,
         cell: Tuple[int, int],
-        include_agent: bool = True,
+        include_agent: bool = False,
     ) -> bool:
         validated_cell = tuple(map(int, self._validate_position(cell)))
 
         if include_agent and self._cell_is_inside_vehicle(
             validated_cell,
             tuple(map(int, self.position)),
-            self.vehicle_marker_size,
+            self.vehicle_size,
         ):
             return True
 
@@ -255,60 +272,73 @@ class CalderaEnv(gym.Env):
     def avoid_obstacle(self, next_position: np.ndarray) -> np.ndarray:
         proposed_position = tuple(map(int, next_position))
         if self.is_cell_occupied_by_vehicle(proposed_position, include_agent=False):
+            print(f"Movement blocked by vehicle at {proposed_position}. Staying at {tuple(self.position)}")
             return self.position.copy()
+        print(f"Movement successful to {proposed_position}")
         return next_position
 
-    def perform_move(self, action: int) -> np.ndarray:
+    def _normalize_action(self, action: Union[int, str]) -> str:
+        if isinstance(action, str):
+            normalized_action = action.upper()
+            if normalized_action in ACTION_TO_INDEX:
+                return normalized_action
+            raise ValueError(f"Invalid action: {action}")
+
+        if isinstance(action, (int, np.integer)) and self.action_space.contains(int(action)):
+            return ACTION_NAMES[int(action)]
+
+        raise ValueError(f"Invalid action: {action}")
+
+    def perform_move(self, action: str) -> np.ndarray:
         x_pos, y_pos = self.position
 
-        if action == 0:
+        if action == NORTH:
             y_pos = max(0, y_pos - self.delta)
-        elif action == 1:
+        elif action == SOUTH:
             y_pos = min(int(self.max_position[1]), y_pos + self.delta)
-        elif action == 2:
+        elif action == WEST:
             x_pos = max(0, x_pos - self.delta)
-        elif action == 3:
+        elif action == EAST:
             x_pos = min(int(self.max_position[0]), x_pos + self.delta)
 
         next_position = np.array([x_pos, y_pos], dtype=np.int64)
+        print(f"Attempting to move {action} to {tuple(next_position)}")
         return self.avoid_obstacle(next_position)
 
     def perform_stochastic_move(
         self,
-        action: int,
+        action: str,
         success_probabilities: Sequence[float],
     ) -> np.ndarray:
-        if action not in {0, 1, 2, 3}:
-            raise ValueError("perform_stochastic_move only supports movement actions 0-3")
+        if action not in MOVEMENT_ACTIONS:
+            raise ValueError(
+                "perform_stochastic_move only supports movement actions "
+                f"{MOVEMENT_ACTIONS}"
+            )
 
         validated_probabilities = self._validate_success_probabilities(success_probabilities)
-        right_turn_action = {
-            0: 3,
-            3: 1,
-            1: 2,
-            2: 0,
-        }
+        action_index = ACTION_TO_INDEX[action]
 
-        if np.random.random() < validated_probabilities[action]:
+        if np.random.random() < validated_probabilities[action_index]:
             return self.perform_move(action)
 
-        return self.perform_move(right_turn_action[action])
+        return self.perform_move(WRONG_TURN_ACTION[action])
 
-    def step(self, action: int):
-        if not self.action_space.contains(action):
-            raise ValueError(f"Invalid action: {action}")
+    def step(self, action: Union[int, str]):
+        normalized_action = self._normalize_action(action)
 
-        if action != 4:
+        if normalized_action != SAMPLE:
             if self.stochastic_movement:
                 self.position = self.perform_stochastic_move(
-                    action,
+                    normalized_action,
                     self.move_success_probabilities,
                 )
             else:
-                self.position = self.perform_move(action)
+                self.position = self.perform_move(normalized_action)
 
         is_new_sample = False
-        if action == 4:
+        if normalized_action == SAMPLE:
+            print(f"Sampling at position {tuple(self.position)}")
             cell = tuple(self.position)
             is_new_sample = cell not in self.sampled_cells
             if is_new_sample:
@@ -317,9 +347,8 @@ class CalderaEnv(gym.Env):
         reward = float(
             self.reward_function(
                 self,
-                action,
-                tuple(self.position),
-                is_new_sample,
+                normalized_action,
+                self._get_obs()
             )
         )
 
@@ -378,7 +407,7 @@ class CalderaEnv(gym.Env):
                     self.position[0],
                     self.position[1],
                     marker="s",
-                    s=self.vehicle_marker_size,
+                    s=self.vehicle_size,
                     c="black",
                     linewidths=2,
                 )
@@ -402,14 +431,45 @@ class CalderaEnv(gym.Env):
         return fig, ax
     
 
+def build_lawnmower_actions(env: CalderaEnv) -> List[str]:
+    actions: List[str] = []
+
+    for row_index in range(env.num_rows):
+        horizontal_action = EAST if row_index % 2 == 0 else WEST
+
+        for col_index in range(env.num_cols):
+            actions.append(SAMPLE)
+            if col_index < env.num_cols - 1:
+                actions.append(horizontal_action)
+
+        if row_index < env.num_rows - 1:
+            actions.append(SOUTH)
+
+    return actions
 
 
-def main():
-    delta = 10
-    # the x and y dimensions of our caldera
+def compute_lawnmower_energy(env: CalderaEnv) -> int:
+    samples = env.num_rows * env.num_cols
+    horizontal_moves = env.num_rows * (env.num_cols - 1)
+    vertical_moves = env.num_rows - 1
+    return samples + horizontal_moves + vertical_moves
+
+
+def main_lawnmower():
     dim_x = 100
     dim_y = 100
-    initial_position = (60, 20)  
+    delta = 10
+    initial_position = (0, 0)
+
+    probe_env = CalderaEnv(
+        pit_params=DEFAULT_PIT_PARAMS,
+        pit_weights=DEFAULT_PIT_WEIGHTS,
+        dim_x=dim_x,
+        dim_y=dim_y,
+        delta=delta,
+        initial_position=initial_position,
+    )
+    max_energy = compute_lawnmower_energy(probe_env)
 
     caldera_env = CalderaEnv(
         pit_params=DEFAULT_PIT_PARAMS,
@@ -417,8 +477,54 @@ def main():
         dim_x=dim_x,
         dim_y=dim_y,
         delta=delta,
-        initial_position=initial_position
+        initial_position=initial_position,
+        max_energy=max_energy,
     )
+
+    actions = build_lawnmower_actions(caldera_env)
+    total_reward = 0.0
+    counter =0
+    for step_index, action in enumerate(actions, start=1):
+        counter += 1
+        if counter<100:            
+            obs, reward, terminated, truncated, _ = caldera_env.step(action)
+            total_reward += reward
+
+        print(
+            f"Step {step_index}: action={action}, position={tuple(obs['position'])}, "
+            f"reward={reward:.2f}, energy={obs['energy']}"
+        )
+
+        if terminated or truncated:
+            print("Episode finished before the full lawn-mowing pattern completed.")
+            break
+
+    print(f"Visited cells: {len(caldera_env.sampled_cells)}")
+    print(f"Total reward: {total_reward:.2f}")
+    print(f"Final position: {tuple(caldera_env.position)}")
+
+    fig, _ = caldera_env.visualize_caldera()
+    plt.show()
+
+
+
+
+def main():
+    delta = 10
+    # the x and y dimensions of our caldera
+    dim_x = 1000
+    dim_y = 1000
+    initial_position = (600, 200)  
+
+    caldera_env = CalderaEnv(
+        pit_params=DEFAULT_PIT_PARAMS,
+        pit_weights=DEFAULT_PIT_WEIGHTS,
+        dim_x=dim_x,
+        dim_y=dim_y,
+        delta=delta,
+        initial_position=initial_position,
+    )
+
     current_depth = caldera_env.get_depth_value(tuple(caldera_env.position))
     caldera_env.add_vehicle((10, 10))
     caldera_env.add_vehicle((10, 20), vehicle_size=2 * delta)
@@ -439,8 +545,8 @@ def main():
     
     i = 0
     path = [caldera_env.position.copy()]
-    while i < 100:
-        next_action = np.random.randint(0, 5)
+    while i < 1000:
+        next_action = np.random.choice(ACTION_NAMES)
         obs, reward, terminated, truncated, info = caldera_env.step(next_action)
 
         current_depth = caldera_env.get_depth_value(tuple(caldera_env.position))
@@ -478,4 +584,4 @@ def main_stochastic():
 
 
 if __name__ == "__main__":
-    main()
+    main_lawnmower()

@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug HW1 (Agg Backend)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/hw/hw1/to_implement.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "env": {
+        "MPLBACKEND": "Agg"
+      }
+    }
+  ]
+}
