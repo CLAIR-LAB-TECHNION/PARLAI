@@ -99,18 +99,15 @@ def main():
 
     
     # Default parameters for the three pits in the caldera, along with their weights that control how deep they are.
-    PIT_PARAMS = (
-    BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.16, sigmay=0.15, mux=0.2, muy=0.2),
-    BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.18, sigmay=0.2, mux=0.5, muy=0.7),
-    BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.17, sigmay=0.15, mux=0.6, muy=0.3),
-    BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.2, sigmay=0.2, mux=0.9, muy=0.1),
-
-    )
-    PIT_WEIGHTS = (16000.0, 22000.0, 18000.0, 50000.0)
+    #PIT_PARAMS = (
+    #BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.16, sigmay=0.15, mux=0.2, muy=0.2),
+    #BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.18, sigmay=0.2, mux=0.5, muy=0.7),
+    #BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.17, sigmay=0.15, mux=0.6, muy=0.3),
+    #BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.2, sigmay=0.2, mux=0.9, muy=0.1),
+    #)
+    #PIT_WEIGHTS = (16000.0, 22000.0, 18000.0, 50000.0)
 
     caldera_env = CalderaEnv(
-        pit_params=PIT_PARAMS,
-        pit_weights=PIT_WEIGHTS,
         dim_x=dim_x,
         dim_y=dim_y,
         delta=delta,
@@ -119,13 +116,12 @@ def main():
     )
 
     current_depth = caldera_env.get_value(tuple(caldera_env.position))
-    caldera_env.add_vehicle((100, 100))
-    caldera_env.add_vehicle((100, 200), vehicle_size=100 * delta)
-    caldera_env.add_vehicle((600, 800), vehicle_size=40 * delta)
+    caldera_env.add_vehicle((200, 200), vehicle_size=20 * delta)
+    caldera_env.add_vehicle((600, 800), vehicle_size=10 * delta)
 
     print(f"Current depth: {current_depth}")
-    print(f"Is (100, 10) occupied? {caldera_env.is_occupied((100, 10))}")
-    print(f"Is (300, 20) occupied? {caldera_env.is_occupied((300, 20))}")
+    print(f"Is (100, 10) occupied? {caldera_env.is_occupied((10, 10))}")
+    print(f"Is (300, 20) occupied? {caldera_env.is_occupied((30, 20))}")
     print(
         "Is the agent cell occupied by another vehicle? "
         f"{caldera_env.is_occupied(tuple(caldera_env.position), include_agent=False)}"
@@ -138,7 +134,7 @@ def main():
 
     i = 0
     path = [caldera_env.position.copy()]
-    while i < 1000:
+    while i < 10:
         next_action = np.random.choice(ACTION_NAMES)
         obs, reward, terminated, truncated, info = caldera_env.step(next_action)
 
@@ -152,7 +148,7 @@ def main():
             print("Episode finished.")
             break
 
-    fig, _ = caldera_env.visualize_caldera(agent_path=path)
+    fig, _ = caldera_env.visualize_caldera(agent_path=path,show_grid_lines=True)
     plt.show()
 
 
@@ -174,5 +170,13 @@ def main_stochastic():
     )
 
 
+def visualize_default_caldera_with_grid_lines():
+    caldera_env = CalderaEnv(initial_position=(60, 20), delta=10)
+
+    fig, _ = caldera_env.visualize_caldera(show_grid_lines=True)
+    plt.show()
+
+
 if __name__ == "__main__":
-    main()
+    main()    
+    #visualize_default_caldera_with_grid_lines()

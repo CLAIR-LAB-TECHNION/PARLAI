@@ -64,16 +64,15 @@ def indices_to_position(
 
 def is_cell_within_bounding_box(
     cell: Tuple[int, int],
-    center_position: Tuple[int, int],
+    bottom_left_position: Tuple[int, int],
     box_size: float,
 ) -> bool:
     cell_x, cell_y = cell
-    center_x, center_y = center_position
-    half_size = box_size / 2.0
+    bottom_left_x, bottom_left_y = bottom_left_position
 
-    x_min = center_x - half_size
-    x_max = center_x + half_size
-    y_min = center_y - half_size
-    y_max = center_y + half_size
+    x_min = bottom_left_x
+    x_max = bottom_left_x + box_size
+    y_min = bottom_left_y
+    y_max = bottom_left_y + box_size
 
     return x_min <= cell_x < x_max and y_min <= cell_y < y_max

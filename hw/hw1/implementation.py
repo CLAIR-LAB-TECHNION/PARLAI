@@ -5,6 +5,7 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 
 from utils import (
     BivariateNormalStruct,
@@ -75,7 +76,6 @@ class CalderaEnv(gym.Env):
         pit_params: Sequence[BivariateNormalStruct] = DEFAULT_PIT_PARAMS,
         pit_weights: Sequence[float] = DEFAULT_PIT_WEIGHTS,
         initial_position: Tuple[int, int] = (0, 0),
-        vehicle_size: Optional[int] = None, # default to 1 cell, can be larger to represent bigger vehicles
         max_energy: int = 200,
         initial_energy: Optional[int] = None,
         energy_per_step: int = 1,
@@ -115,11 +115,6 @@ class CalderaEnv(gym.Env):
         self.max_energy = max_energy
         self.initial_energy = max_energy if initial_energy is None else initial_energy
         self.energy_per_step = energy_per_step
-        self.vehicle_size = (
-            max(1, int(self.dim_x / self.delta))
-            if vehicle_size is None
-            else vehicle_size
-        )
         # Position is stored as (x, y) in the same coordinate scale as the plotted grid.
         # Whenever reset is applied, the agent returns to the initial position and energy level, and all sampled cells are cleared.
         self.initial_position = validate_bounds(
@@ -158,7 +153,7 @@ class CalderaEnv(gym.Env):
         row, col = position_to_indices(validated_cell, self.delta)
         return float(self.depth_map[row, col])
     
-    # Method to add a vehicle to the surface at a specified position and size, validating the input position and ensuring it is on the grid.    
+    # Method to add a vehicle to the surface using its bottom-left corner and side length.
     def add_vehicle(
         self,
         vehicle_position: Tuple[int, int],
@@ -167,7 +162,12 @@ class CalderaEnv(gym.Env):
         validated_position = tuple(
             map(int, validate_bounds(vehicle_position, self.max_position, self.delta))
         )
-        resolved_vehicle_size = self.vehicle_size if vehicle_size is None else vehicle_size
+        resolved_vehicle_size = self.delta if vehicle_size is None else vehicle_size
+        if (
+            validated_position[0] + resolved_vehicle_size > int(self.max_position[0])
+            or validated_position[1] + resolved_vehicle_size > int(self.max_position[1])
+        ):
+            raise ValueError("vehicle footprint must stay within the map bounds")
         self.surface_vehicles[validated_position] = resolved_vehicle_size
 
     # checks if the cell is occupied by another vehicle, with an option to include the agent's own position in the check. This is used to determine if a movement action would be blocked by an obstacle.   
@@ -181,11 +181,7 @@ class CalderaEnv(gym.Env):
             map(int, validate_bounds(cell, self.max_position, self.delta))
         )
 
-        if include_agent and is_cell_within_bounding_box(
-            validated_cell,
-            tuple(map(int, self.position)),
-            self.vehicle_size,
-        ):
+        if include_agent and validated_cell == tuple(map(int, self.position)):
             return True
 
         return any(
@@ -292,37 +288,63 @@ class CalderaEnv(gym.Env):
     def visualize_caldera(
         self,
         agent_path: Optional[Sequence[Tuple[int, int]]] = None,
+        show_gaussian_centers: bool = False,
+        show_grid_lines: bool = False,
+        show_agent_path: bool = True,
     ):
         x, y, z = self._generate_caldera_map()
         fig, ax = plt.subplots(figsize=(8, 6))
         contour = ax.contourf(x, y, z, levels=20, cmap="viridis")
-        pit_center_x = [params.mux * self.dim_x for params in self.pit_params]
-        pit_center_y = [params.muy * self.dim_y for params in self.pit_params]
-        ax.scatter(
-            pit_center_x,
-            pit_center_y,
-            marker="x",
-            s=50,
-            c="white",
-            linewidths=1.5,
-            zorder=11,
-        )
+        if show_grid_lines:
+            ax.vlines(
+                self.x_coords,
+                ymin=self.y_coords[0],
+                ymax=self.y_coords[-1],
+                color="white",
+                linewidth=0.5,
+                alpha=0.2,
+                zorder=5,
+            )
+            ax.hlines(
+                self.y_coords,
+                xmin=self.x_coords[0],
+                xmax=self.x_coords[-1],
+                color="white",
+                linewidth=0.5,
+                alpha=0.2,
+                zorder=5,
+            )
+        if show_gaussian_centers:
+            pit_center_x = [params.mux * self.dim_x for params in self.pit_params]
+            pit_center_y = [params.muy * self.dim_y for params in self.pit_params]
+            ax.scatter(
+                pit_center_x,
+                pit_center_y,
+                marker="x",
+                s=50,
+                c="white",
+                linewidths=1.5,
+                zorder=11,
+            )
 
         path_to_plot = self.agent_path if agent_path is None else agent_path
 
         other_vehicle_locations = self.get_vehicle_locations()
         if other_vehicle_locations:
-            vehicle_x, vehicle_y = zip(*other_vehicle_locations)
-            vehicle_sizes = [self.surface_vehicles[vehicle_position] for vehicle_position in other_vehicle_locations]
-            ax.scatter(
-                vehicle_x,
-                vehicle_y,
-                marker="s",
-                s=vehicle_sizes,
-                c="red",
-                edgecolors="white",
-                linewidths=1.5,
-            )
+            for vehicle_position in other_vehicle_locations:
+                vehicle_size = self.surface_vehicles[vehicle_position]
+                ax.add_patch(
+                    Rectangle(
+                        vehicle_position,
+                        vehicle_size,
+                        vehicle_size,
+                        facecolor="black",
+                        edgecolor="black",
+                        linewidth=1.5,
+                        alpha=0.85,
+                        zorder=8,
+                    )
+                )
 
         row, col = position_to_indices(self.position, self.delta)
         if 0 <= row < z.shape[0] and 0 <= col < z.shape[1]:
@@ -331,13 +353,13 @@ class CalderaEnv(gym.Env):
                 ax.scatter(
                     self.position[0],
                     self.position[1],
-                    marker="s",
-                    s=self.vehicle_size,
+                    marker="o",
+                    s=20,
                     c="black",
-                    linewidths=2,
+                    zorder=9,
                 )
 
-        if path_to_plot:
+        if show_agent_path and path_to_plot:
             path_x, path_y = zip(*path_to_plot)
             ax.plot(
                 path_x,
