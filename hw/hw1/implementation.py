@@ -1,5 +1,5 @@
 from dataclasses import replace
-from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -8,9 +8,10 @@ import matplotlib.pyplot as plt
 
 from utils import (
     BivariateNormalStruct,
-    _bivariate_normal,
+    bivariate_normal,
     is_cell_within_bounding_box,
-    valiedate_bounds,
+    position_to_indices,
+    validate_bounds,
 )
 
 
@@ -23,6 +24,9 @@ DEFAULT_PIT_PARAMS = (
 
 # The weights for each pit, controlling how deep they are relative to each other.
 DEFAULT_PIT_WEIGHTS = (16000.0, 22000.0, 18000.0)
+
+# A default value to use in observations when certain information is not applicable
+DEFAULT_VALUE = -1
 
 # Action names and mappings for better readability in the environment implementation.
 NORTH = "NORTH"
@@ -49,7 +53,7 @@ def reward_function_exploration(
     if action != SAMPLE:
         return -0.1
 
-    if action == SAMPLE and obs["sampled_here"]:
+    if action == SAMPLE and obs["sampled_before"]:
         return -0.5
     else:    
         return 1.0
@@ -67,6 +71,7 @@ class CalderaEnv(gym.Env):
         vehicle_size: Optional[int] = None, # default to 1 cell, can be larger to represent bigger vehicles
         max_energy: int = 200,
         initial_energy: Optional[int] = None,
+        energy_per_step: int = 1,
         reward_function: Callable[..., float] = reward_function_exploration,
         stochastic: bool = False,
         success_probabilities: Optional[Sequence[float]] = None,
@@ -96,12 +101,13 @@ class CalderaEnv(gym.Env):
                 )
      
         # Generate the depth map for the caldera using the provided pit parameters and weights.
-        _, _, self.depth_map = self.generate_caldera_map()
+        _, _, self.depth_map = self._generate_caldera_map()
         self.value_map = -self.depth_map
  
         # initilize the agent parameters and state variables
         self.max_energy = max_energy
         self.initial_energy = max_energy if initial_energy is None else initial_energy
+        self.energy_per_step = energy_per_step
         self.vehicle_size = (
             max(1, int(self.dim_x / self.delta))
             if vehicle_size is None
@@ -109,14 +115,14 @@ class CalderaEnv(gym.Env):
         )
         # Position is stored as (x, y) in the same coordinate scale as the plotted grid.
         # Whenever reset is applied, the agent returns to the initial position and energy level, and all sampled cells are cleared.
-        self.initial_position = valiedate_bounds(
+        self.initial_position = validate_bounds(
             initial_position,
             self.max_position,
             self.delta,
         )
         self.position = self.initial_position.copy()
         self.energy = self.initial_energy
-        self.sampled_cells: Set[Tuple[int, int]] = set()
+        self.sampled_cells: Dict[Tuple[int, int], float] = {}
         self.surface_vehicles: Dict[Tuple[int, int], int] = {}
         self.agent_path = [tuple(map(int, self.position))]
         
@@ -141,29 +147,25 @@ class CalderaEnv(gym.Env):
     
     # The function that computes the depth of the caldera at any given (x, y) coordinate by summing the contributions from all the pits, which are modeled as bivariate normal distributions. 
     # The depth is negative because we want deeper areas to have lower values.    
-    def caldera_sim_function(self, x, y):
+    def _caldera_sim_function(self, x, y):
         x = x / self.dim_x
         y = y / self.dim_y
         z = np.zeros_like(x, dtype=float)
         for weight, params in zip(self.pit_weights, self.pit_params):
-            z += weight * _bivariate_normal(replace(params, x=x, y=y))
+            z += weight * bivariate_normal(replace(params, x=x, y=y))
         return -z
 
     # Generate the depth map for the entire caldera based on the simulation function. 
     # This is used for visualization and to look up depth values at specific locations.
-    def generate_caldera_map(self):
+    def _generate_caldera_map(self):
         x_grid, y_grid = np.meshgrid(self.x_coords, self.y_coords)
-        z = self.caldera_sim_function(x_grid, y_grid)
+        z = self._caldera_sim_function(x_grid, y_grid)
         return x_grid, y_grid, z
-    # Helper method to convert a position in the grid to the corresponding indices in the depth map.    
-    def _position_to_indices(self, position: np.ndarray) -> Tuple[int, int]:
-        x_pos, y_pos = map(int, position)
-        return y_pos // self.delta, x_pos // self.delta
   
-    # Method to get the depth value at a specific cell, validating the input position first.
-    def get_depth_value(self, cell: Tuple[int, int]) -> float:
-        validated_cell = valiedate_bounds(cell, self.max_position, self.delta)
-        row, col = self._position_to_indices(validated_cell)
+    # Method to get the terrain value at a specific cell, validating the input position first.
+    def get_value(self, cell: Tuple[int, int]) -> float:
+        validated_cell = validate_bounds(cell, self.max_position, self.delta)
+        row, col = position_to_indices(validated_cell, self.delta)
         return float(self.depth_map[row, col])
     
     # Method to add a vehicle to the surface at a specified position and size, validating the input position and ensuring it is on the grid.    
@@ -173,7 +175,7 @@ class CalderaEnv(gym.Env):
         vehicle_size: Optional[int] = None,
     ) -> None:
         validated_position = tuple(
-            map(int, valiedate_bounds(vehicle_position, self.max_position, self.delta))
+            map(int, validate_bounds(vehicle_position, self.max_position, self.delta))
         )
         resolved_vehicle_size = self.vehicle_size if vehicle_size is None else vehicle_size
         self.surface_vehicles[validated_position] = resolved_vehicle_size
@@ -186,7 +188,7 @@ class CalderaEnv(gym.Env):
     ) -> bool:
         
         validated_cell = tuple(
-            map(int, valiedate_bounds(cell, self.max_position, self.delta))
+            map(int, validate_bounds(cell, self.max_position, self.delta))
         )
 
         if include_agent and is_cell_within_bounding_box(
@@ -201,15 +203,22 @@ class CalderaEnv(gym.Env):
             for vehicle_position, vehicle_size in self.surface_vehicles.items()
         )
 
-    def get_other_vehicle_locations(self) -> Tuple[Tuple[int, int], ...]:
+    # Method to get the locations of all vehicles on the surface, with an option to include the agent's own position. 
+    # This is useful for visualization and for checking occupancy.    
+    def get_vehicle_locations(
+        self,
+        include_agent: bool = False,
+    ) -> Tuple[Tuple[int, int], ...]:
         agent_position = tuple(map(int, self.position))
-        return tuple(
-            sorted(
-                vehicle_position
-                for vehicle_position in self.surface_vehicles
-                if vehicle_position != agent_position
-            )
-        )
+        vehicle_locations = {
+            vehicle_position
+            for vehicle_position in self.surface_vehicles
+            if include_agent or vehicle_position != agent_position
+        }
+        if include_agent:
+            vehicle_locations.add(agent_position)
+
+        return tuple(sorted(vehicle_locations))
 
     # return the structure of the action space, according to the Gym API.    
     def _get_action_space(self):
@@ -225,29 +234,97 @@ class CalderaEnv(gym.Env):
                     dtype=np.int64,
                 ),
                 "energy": spaces.Discrete(self.max_energy + 1),
-                "sampled_here": spaces.Discrete(2),
+                "sampled_before": spaces.Discrete(2),
+                "value": spaces.Box(
+                    low=np.array(-np.inf, dtype=np.float64),
+                    high=np.array(np.inf, dtype=np.float64),
+                    shape=(),
+                    dtype=np.float64,
+                ),
             }
         )
-
-    # get the current observation
-    def _get_obs(self):
-        sampled_here = int(tuple(self.position) in self.sampled_cells)
-        return {
-            "position": self.position.copy(),
-            "energy": self.energy,
-            "sampled_here": sampled_here,
-        }
 
     # reset the enviornment including the agent's state
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self.position = self.initial_position.copy()
         self.energy = self.initial_energy
-        self.sampled_cells = set()
+        self.sampled_cells = {}
         self.agent_path = [tuple(map(int, self.position))]
         info = {}
-        return self._get_obs(), info
+        obs = {
+            "position": self.position.copy(),
+            "energy": self.energy,
+            "sampled_before": 0,
+            "value": np.float64(DEFAULT_VALUE),
+        }
+        return obs, info
+
+    # The main method that processes the agent's action, updates the environment state, 
+    # computes the reward, and returns the new observation, reward, and done flags according to the Gym API. 
+    def step(self, action: Union[int, str]):
+
+        # perform the perscribed action
+ 
+        # Check if the input action is a valid string or integer and converts it to the corresponding string action name.
+        normalized_action = self._normalize_action(action)
+
+        # perform a move action
+        if normalized_action in MOVEMENT_ACTIONS:
+            self.position = self._perform_move(normalized_action)
+
+        # perform a sample action
+        if normalized_action == SAMPLE:
+            # check if the current cell has been sampled before and record it if not, 
+            cell = tuple(self.position)
+            sampled_before = int(cell in self.sampled_cells)
+            if not sampled_before:
+                sampled_value = np.float64(self.get_value(cell))
+                self.sampled_cells[cell] = float(sampled_value)
+            else:
+                sampled_value = np.float64(self.sampled_cells[cell])
+              
+        # get the observation after performing the action
+        obs = {
+            "position": self.position.copy(),
+            "energy": self.energy,
+            "sampled_before": (
+                sampled_before
+                if normalized_action == SAMPLE
+                else int(tuple(self.position) in self.sampled_cells)
+            ),
+            "value": (
+                sampled_value
+                if normalized_action == SAMPLE
+                else np.float64(DEFAULT_VALUE)
+            ),
+        }
+
+        # compute the reward based on the action taken and the resulting observation using the provided reward function.         
+        reward = float(self.reward_function(self, normalized_action, obs))
+
+        # record the agent's path
+        current_position = tuple(map(int, self.position))
+        if current_position != self.agent_path[-1]:
+            self.agent_path.append(current_position)
+
+        # update energy usage    
+        self.energy -= self.energy_per_step
+        # check if the episode is terminated due to energy depletion or other conditions, 
+        # and prepare the info dictionary for any additional information to return.
+        terminated = self.energy <= 0
+        truncated = False
+        info = {}
+
+        assert self.observation_space.contains(obs)
+        assert isinstance(reward, (float, int))
+
+      
+        # return the observation, reward, terminated, truncated, and info as expected by Gym environments 
+        return obs, reward, terminated, truncated, info
     
+    # Helper method to normalize the action input, allowing for both string and integer representations of actions. 
+    # This ensures that the environment can handle different formats of action inputs gracefully.
     def _normalize_action(self, action: Union[int, str]) -> str:
         if isinstance(action, str):
             normalized_action = action.upper()
@@ -260,9 +337,9 @@ class CalderaEnv(gym.Env):
 
         raise ValueError(f"Invalid action: {action}")
 
-    def perform_move(self, action: str) -> np.ndarray:
+    def _perform_move(self, action: str) -> np.ndarray:
         if action not in MOVEMENT_ACTIONS:
-            raise ValueError(f"perform_move only supports movement actions {MOVEMENT_ACTIONS}")
+            raise ValueError(f"_perform_move only supports movement actions {MOVEMENT_ACTIONS}")
 
         effective_action = action
         if self.stochastic:           
@@ -291,61 +368,18 @@ class CalderaEnv(gym.Env):
 
         print(f"Movement successful to {proposed_position}")
         return next_position
-
-    def step(self, action: Union[int, str]):
-        normalized_action = self._normalize_action(action)
-
-        if normalized_action in MOVEMENT_ACTIONS:
-            self.position = self.perform_move(normalized_action)
-
-        is_new_sample = False
-        if normalized_action == SAMPLE:
-            print(f"Sampling at position {tuple(self.position)}")
-            cell = tuple(self.position)
-            is_new_sample = cell not in self.sampled_cells
-            if is_new_sample:
-                self.sampled_cells.add(cell)
-
-        reward = float(
-            self.reward_function(
-                self,
-                normalized_action,
-                self._get_obs()
-            )
-        )
-
-        # record the agent's path
-        current_position = tuple(map(int, self.position))
-        if current_position != self.agent_path[-1]:
-            self.agent_path.append(current_position)
-
-        # update energy usage    
-        self.energy -= 1
-
-        terminated = self.energy <= 0
-        truncated = False
-        info = {}
-
-        obs = self._get_obs()
-
-        assert self.observation_space.contains(obs)
-        assert isinstance(reward, (float, int))
-
-        # return the observation, reward, terminated, truncated, and info as expected by Gym environments 
-        return obs, reward, terminated, truncated, info
-
-   
+  
     def visualize_caldera(
         self,
         agent_path: Optional[Sequence[Tuple[int, int]]] = None,
     ):
-        x, y, z = self.generate_caldera_map()
+        x, y, z = self._generate_caldera_map()
         fig, ax = plt.subplots(figsize=(8, 6))
         contour = ax.contourf(x, y, z, levels=20, cmap="viridis")
 
         path_to_plot = self.agent_path if agent_path is None else agent_path
 
-        other_vehicle_locations = self.get_other_vehicle_locations()
+        other_vehicle_locations = self.get_vehicle_locations()
         if other_vehicle_locations:
             vehicle_x, vehicle_y = zip(*other_vehicle_locations)
             vehicle_sizes = [self.surface_vehicles[vehicle_position] for vehicle_position in other_vehicle_locations]
@@ -359,7 +393,7 @@ class CalderaEnv(gym.Env):
                 linewidths=1.5,
             )
 
-        row, col = self._position_to_indices(self.position)
+        row, col = position_to_indices(self.position, self.delta)
         if 0 <= row < z.shape[0] and 0 <= col < z.shape[1]:
             vehicle_value = z[row, col]
             if not np.isneginf(vehicle_value):

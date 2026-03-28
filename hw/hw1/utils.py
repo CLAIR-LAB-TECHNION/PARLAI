@@ -16,7 +16,7 @@ class BivariateNormalStruct:
 
 # A terrain-shaping building block:
 # The function computes the value of a 2D Gaussian (bivariate normal) density.
-def _bivariate_normal(params: BivariateNormalStruct):
+def bivariate_normal(params: BivariateNormalStruct):
     # x_term measures how far x is from the center mux, scaled by sigmax
     x_term = ((params.x - params.mux) ** 2) / (2 * params.sigmax ** 2)
     # y_term does the same for y
@@ -27,7 +27,7 @@ def _bivariate_normal(params: BivariateNormalStruct):
     return norm * np.exp(-(x_term + y_term))
 
 
-def valiedate_bounds(
+def validate_bounds(
     position: Tuple[int, int],
     max_position: np.ndarray,
     delta: int,
@@ -44,6 +44,22 @@ def valiedate_bounds(
         )
 
     return np.array([x_pos, y_pos], dtype=np.int64)
+
+
+def position_to_indices(
+    position: Tuple[int, int],
+    delta: int,
+) -> Tuple[int, int]:
+    x_pos, y_pos = map(int, position)
+    return y_pos // delta, x_pos // delta
+
+
+def indices_to_position(
+    indices: Tuple[int, int],
+    delta: int,
+) -> Tuple[int, int]:
+    row, col = map(int, indices)
+    return col * delta, row * delta
 
 
 def is_cell_within_bounding_box(

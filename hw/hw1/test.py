@@ -105,7 +105,7 @@ def main():
         initial_position=initial_position,
     )
 
-    current_depth = caldera_env.get_depth_value(tuple(caldera_env.position))
+    current_depth = caldera_env.get_value(tuple(caldera_env.position))
     caldera_env.add_vehicle((10, 10))
     caldera_env.add_vehicle((10, 20), vehicle_size=2 * delta)
     caldera_env.add_vehicle((10, 40), vehicle_size=4 * delta)
@@ -128,7 +128,7 @@ def main():
         next_action = np.random.choice(ACTION_NAMES)
         obs, reward, terminated, truncated, info = caldera_env.step(next_action)
 
-        current_depth = caldera_env.get_depth_value(tuple(caldera_env.position))
+        current_depth = caldera_env.get_value(tuple(caldera_env.position))
         path.append(caldera_env.position.copy())
         print(f"Step output: {(obs, reward, terminated, truncated, info)}")
         print(f"Agent position: {tuple(obs['position'])}")
