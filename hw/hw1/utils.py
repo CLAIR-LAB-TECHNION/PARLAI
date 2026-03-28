@@ -30,17 +30,16 @@ def bivariate_normal(params: BivariateNormalStruct):
 def validate_bounds(
     position: Tuple[int, int],
     max_position: np.ndarray,
-    delta: int,
 ) -> np.ndarray:
     x_pos, y_pos = map(int, position)
 
-    if x_pos < 0 or x_pos > max_position[0] or x_pos % delta != 0:
+    if x_pos < 0 or x_pos > max_position[0]:
         raise ValueError(
-            f"x position must be on the grid between 0 and {max_position[0]}"
+            f"x position must be between 0 and {max_position[0]}"
         )
-    if y_pos < 0 or y_pos > max_position[1] or y_pos % delta != 0:
+    if y_pos < 0 or y_pos > max_position[1]:
         raise ValueError(
-            f"y position must be on the grid between 0 and {max_position[1]}"
+            f"y position must be between 0 and {max_position[1]}"
         )
 
     return np.array([x_pos, y_pos], dtype=np.int64)
@@ -52,14 +51,6 @@ def position_to_indices(
 ) -> Tuple[int, int]:
     x_pos, y_pos = map(int, position)
     return y_pos // delta, x_pos // delta
-
-
-def indices_to_position(
-    indices: Tuple[int, int],
-    delta: int,
-) -> Tuple[int, int]:
-    row, col = map(int, indices)
-    return col * delta, row * delta
 
 
 def is_cell_within_bounding_box(
@@ -75,4 +66,4 @@ def is_cell_within_bounding_box(
     y_min = bottom_left_y
     y_max = bottom_left_y + box_size
 
-    return x_min <= cell_x < x_max and y_min <= cell_y < y_max
+    return x_min <= cell_x <= x_max and y_min <= cell_y <= y_max
