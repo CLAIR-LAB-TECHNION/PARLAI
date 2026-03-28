@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+from utils import BivariateNormalStruct
 from implementation import (
     ACTION_NAMES,
     EAST,
@@ -96,31 +97,44 @@ def main():
     dim_y = 1000
     initial_position = (600, 200)
 
+    
+    # Default parameters for the three pits in the caldera, along with their weights that control how deep they are.
+    PIT_PARAMS = (
+    BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.16, sigmay=0.15, mux=0.2, muy=0.2),
+    BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.18, sigmay=0.2, mux=0.5, muy=0.7),
+    BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.17, sigmay=0.15, mux=0.6, muy=0.3),
+    BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.2, sigmay=0.2, mux=0.9, muy=0.1),
+
+    )
+    PIT_WEIGHTS = (16000.0, 22000.0, 18000.0, 50000.0)
+
     caldera_env = CalderaEnv(
-        pit_params=DEFAULT_PIT_PARAMS,
-        pit_weights=DEFAULT_PIT_WEIGHTS,
+        pit_params=PIT_PARAMS,
+        pit_weights=PIT_WEIGHTS,
         dim_x=dim_x,
         dim_y=dim_y,
         delta=delta,
         initial_position=initial_position,
+        max_energy=1000,
     )
 
     current_depth = caldera_env.get_value(tuple(caldera_env.position))
-    caldera_env.add_vehicle((10, 10))
-    caldera_env.add_vehicle((10, 20), vehicle_size=2 * delta)
-    caldera_env.add_vehicle((10, 40), vehicle_size=4 * delta)
+    caldera_env.add_vehicle((100, 100))
+    caldera_env.add_vehicle((100, 200), vehicle_size=100 * delta)
+    caldera_env.add_vehicle((600, 800), vehicle_size=40 * delta)
 
     print(f"Current depth: {current_depth}")
-    print(f"Is (10, 10) occupied? {caldera_env.is_occupied((10, 10))}")
-    print(f"Is (20, 20) occupied? {caldera_env.is_occupied((20, 20))}")
+    print(f"Is (100, 10) occupied? {caldera_env.is_occupied((100, 10))}")
+    print(f"Is (300, 20) occupied? {caldera_env.is_occupied((300, 20))}")
     print(
         "Is the agent cell occupied by another vehicle? "
         f"{caldera_env.is_occupied(tuple(caldera_env.position), include_agent=False)}"
     )
     print(
         f"Is the agent cell occupied when including the agent? "
-        f"{caldera_env.is_occupied(tuple(caldera_env.position))}"
+        f"{caldera_env.is_occupied(tuple(caldera_env.position),include_agent=True)}"
     )
+    
 
     i = 0
     path = [caldera_env.position.copy()]
