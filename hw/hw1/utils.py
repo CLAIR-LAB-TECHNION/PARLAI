@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Tuple
+from typing import Any, List, Tuple
 
 import numpy as np
 
@@ -30,35 +30,25 @@ def bivariate_normal(params: BivariateNormalStruct):
 def validate_bounds(
     position: Tuple[int, int],
     max_position: np.ndarray,
-) -> np.ndarray:
+) -> bool:
     x_pos, y_pos = map(int, position)
-
-    if x_pos < 0 or x_pos > max_position[0]:
-        raise ValueError(
-            f"x position must be between 0 and {max_position[0]}"
-        )
-    if y_pos < 0 or y_pos > max_position[1]:
-        raise ValueError(
-            f"y position must be between 0 and {max_position[1]}"
-        )
-
-    return np.array([x_pos, y_pos], dtype=np.int64)
+    return 0 <= x_pos <= max_position[0] and 0 <= y_pos <= max_position[1]
 
 
 def position_to_indices(
     position: Tuple[int, int],
-    delta: int,
+    sampling_res: int,
 ) -> Tuple[int, int]:
     x_pos, y_pos = map(int, position)
-    return y_pos // delta, x_pos // delta
+    return y_pos // sampling_res, x_pos // sampling_res
 
 
-def is_cell_within_bounding_box(
-    cell: Tuple[int, int],
+def is_position_within_bounding_box(
+    position: Tuple[int, int],
     bottom_left_position: Tuple[int, int],
     box_size: float,
 ) -> bool:
-    cell_x, cell_y = cell
+    position_x, position_y = position
     bottom_left_x, bottom_left_y = bottom_left_position
 
     x_min = bottom_left_x
@@ -66,4 +56,33 @@ def is_cell_within_bounding_box(
     y_min = bottom_left_y
     y_max = bottom_left_y + box_size
 
-    return x_min <= cell_x <= x_max and y_min <= cell_y <= y_max
+    return x_min <= position_x <= x_max and y_min <= position_y <= y_max
+
+
+def generate_path(
+    current_position: Tuple[int, int],
+    proposed_position: Tuple[int, int],
+) -> List[Tuple[int, int]]:
+    current_x, current_y = map(int, current_position)
+    proposed_x, proposed_y = map(int, proposed_position)
+
+    if current_x != proposed_x:
+        step_direction = 1 if proposed_x > current_x else -1
+        return [
+            (x_pos, current_y)
+            for x_pos in range(
+                current_x + step_direction,
+                proposed_x + step_direction,
+                step_direction,
+            )
+        ]
+
+    step_direction = 1 if proposed_y > current_y else -1
+    return [
+        (current_x, y_pos)
+        for y_pos in range(
+            current_y + step_direction,
+            proposed_y + step_direction,
+            step_direction,
+        )
+    ]

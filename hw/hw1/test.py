@@ -4,30 +4,32 @@ import numpy as np
 from utils import BivariateNormalStruct
 from implementation import (
     ACTION_NAMES,
-    EAST,
+    MOVE_EAST,
+    MOVE_SOUTH,
+    MOVE_WEST,
     CalderaEnv,
     DEFAULT_PIT_PARAMS,
     DEFAULT_PIT_WEIGHTS,
     SAMPLE,
-    SOUTH,
-    WEST,
     stochastic_effet_wrong_turn,
 )
 
 
 def build_lawnmower_actions(env: CalderaEnv) -> list[str]:
     actions: list[str] = []
+    num_cols = len(env.x_grid_coords)
+    num_rows = len(env.y_grid_coords)
 
-    for row_index in range(env.num_rows):
-        horizontal_action = EAST if row_index % 2 == 0 else WEST
+    for row_index in range(num_rows):
+        horizontal_action = MOVE_EAST if row_index % 2 == 0 else MOVE_WEST
 
-        for col_index in range(env.num_cols):
+        for col_index in range(num_cols):
             actions.append(SAMPLE)
-            if col_index < env.num_cols - 1:
+            if col_index < num_cols - 1:
                 actions.append(horizontal_action)
 
-        if row_index < env.num_rows - 1:
-            actions.append(SOUTH)
+        if row_index < num_rows - 1:
+            actions.append(MOVE_SOUTH)
 
     return actions
 
@@ -44,25 +46,25 @@ def compute_lawnmower_energy(env: CalderaEnv) -> int:
 def main_lawnmower():
     dim_x = 100
     dim_y = 100
-    delta = 10
+    sampling_res = 10
     initial_position = (0, 0)
 
     probe_env = CalderaEnv(
-        pit_params=DEFAULT_PIT_PARAMS,
-        pit_weights=DEFAULT_PIT_WEIGHTS,
         dim_x=dim_x,
         dim_y=dim_y,
-        delta=delta,
+        pit_params=DEFAULT_PIT_PARAMS,
+        pit_weights=DEFAULT_PIT_WEIGHTS,
+        sampling_res=sampling_res,
         initial_position=initial_position,
     )
     max_energy = compute_lawnmower_energy(probe_env)
 
     caldera_env = CalderaEnv(
-        pit_params=DEFAULT_PIT_PARAMS,
-        pit_weights=DEFAULT_PIT_WEIGHTS,
         dim_x=dim_x,
         dim_y=dim_y,
-        delta=delta,
+        pit_params=DEFAULT_PIT_PARAMS,
+        pit_weights=DEFAULT_PIT_WEIGHTS,
+        sampling_res=sampling_res,
         initial_position=initial_position,
         max_energy=max_energy,
     )
@@ -95,7 +97,7 @@ def main_lawnmower():
 
 
 def main():
-    delta = 10
+    sampling_res = 10
     dim_x = 1000
     dim_y = 1000
     initial_position = (10, 45)
@@ -113,21 +115,21 @@ def main():
     caldera_env = CalderaEnv(
         dim_x=dim_x,
         dim_y=dim_y,
-        delta=delta,
-        movement_size=delta,
+        sampling_res=sampling_res,
+        movement_size=sampling_res,
         initial_position=initial_position,
         max_energy=1000,
     )
 
     current_depth = caldera_env.perform_sample()
-    caldera_env.add_vehicle((50, 200), vehicle_size=8 * delta)
-    caldera_env.add_vehicle((200, 200), vehicle_size=8 * delta)
-    caldera_env.add_vehicle((300, 150), vehicle_size=8 * delta)
-    caldera_env.add_vehicle((100, 150), vehicle_size=8 * delta)
-    caldera_env.add_vehicle((200, 400), vehicle_size=8 * delta)
+    caldera_env.add_vehicle((50, 200), vehicle_size=8 * sampling_res)
+    caldera_env.add_vehicle((200, 200), vehicle_size=8 * sampling_res)
+    caldera_env.add_vehicle((300, 150), vehicle_size=8 * sampling_res)
+    caldera_env.add_vehicle((100, 150), vehicle_size=8 * sampling_res)
+    caldera_env.add_vehicle((200, 400), vehicle_size=8 * sampling_res)
 
 
-    print(f"Current depth: {current_depth}")
+    print(f"Current depth: {current_depth[1]:.2f}")
     print(f"Is (100, 10) occupied? {caldera_env.is_occupied((10, 10))}")
     print(f"Is (300, 20) occupied? {caldera_env.is_occupied((30, 20))}")
     print(
@@ -150,7 +152,7 @@ def main():
         path.append(caldera_env.position.copy())
         print(f"Step output: {(obs, reward, terminated, truncated, info)}")
         print(f"Agent position: {tuple(obs['position'])}")
-        print(f"Current depth: {current_depth}")
+        print(f"Current depth: {current_depth[1]:.2f}")
         i += 1
         if terminated or truncated:
             print("Episode finished.")
@@ -161,20 +163,20 @@ def main():
 
 
 def main_stochastic():
-    delta = 10
+    sampling_res = 10
     dim_x = 100
     dim_y = 100
     initial_position = (60, 20)
 
     caldera_env = CalderaEnv(
-        pit_params=DEFAULT_PIT_PARAMS,
-        pit_weights=DEFAULT_PIT_WEIGHTS,
         dim_x=dim_x,
         dim_y=dim_y,
-        delta=delta,
+        pit_params=DEFAULT_PIT_PARAMS,
+        pit_weights=DEFAULT_PIT_WEIGHTS,
+        sampling_res=sampling_res,
         initial_position=initial_position,
-        stochastic=True,
         stochastic_effet_function=stochastic_effet_wrong_turn,
+        stochastic=True,
     )
     i = 0
     path = [caldera_env.position.copy()]
@@ -186,7 +188,7 @@ def main_stochastic():
         path.append(caldera_env.position.copy())
         print(f"Step output: {(obs, reward, terminated, truncated, info)}")
         print(f"Agent position: {tuple(obs['position'])}")
-        print(f"Current depth: {current_depth}")
+        print(f"Current depth: {current_depth[1]:.2f}")
         i += 1
         if terminated or truncated:
             print("Episode finished.")
@@ -196,11 +198,11 @@ def main_stochastic():
     plt.show()
 
 
-def main_visual():
-    delta = 10
+def main_test_all():
+    sampling_res = 5
     dim_x = 100
     dim_y = 100
-    initial_position = (66, 25)
+    initial_position = (66, 10)
 
     
     # Default parameters for the three pits in the caldera, along with their weights that control how deep they are.
@@ -215,16 +217,20 @@ def main_visual():
     caldera_env = CalderaEnv(
         dim_x=dim_x,
         dim_y=dim_y,
-        delta=delta,
+        sampling_res=sampling_res,
         initial_position=initial_position,
         max_energy=1000,
+        movement_size=10,
+        observability_distance=5
     )
 
     current_depth = caldera_env.perform_sample()
-    #caldera_env.add_vehicle((200, 200), vehicle_size=2 * delta)
-    #caldera_env.add_vehicle((300, 150), vehicle_size=4 * delta)
+    caldera_env.add_vehicle((22, 83), vehicle_size=15)
+    caldera_env.add_vehicle((84, 15), vehicle_size=11)
+    caldera_env.add_vehicle((40, 30), vehicle_size=30)
 
-    print(f"Current depth: {current_depth}")
+
+    print(f"Current depth: {current_depth[1]:.2f}")
     #print(f"Is (100, 10) occupied? {caldera_env.is_occupied((10, 10))}")
     #print(f"Is (300, 20) occupied? {caldera_env.is_occupied((30, 20))}")
     print(
@@ -234,12 +240,44 @@ def main_visual():
     print(
         f"Is the agent cell occupied when including the agent? "
         f"{caldera_env.is_occupied(tuple(caldera_env.position),include_agent=True)}"
-    )
-    
+    )  
 
-    i = 0
+
+    # move north 
+    obs, reward, terminated, truncated, info = caldera_env.step("MOVE_NORTH")
+    print(f"Step output: {(obs, reward, terminated, truncated, info)}")    
+    print(f"Agent position: {tuple(obs['position'])}")
+    print(f"Current depth: {caldera_env.perform_sample()[1]:.2f}")
+
+    # move east 
+    number_of_east_moves = 10
+    for i in range(number_of_east_moves):
+        print(f"Moving east=step {i}")
+        obs, reward, terminated, truncated, info = caldera_env.step("MOVE_EAST")
+        print(f"Step output: {(obs, reward, terminated, truncated, info)}")    
+        print(f"Agent position: {tuple(obs['position'])}")
+        print(f"Current depth: {caldera_env.perform_sample()[1]:.2f}")
+    # move north 
+    number_of_north_moves = 10
+    for i in range(number_of_north_moves):
+        print(f"Moving north=step {i}")
+        obs, reward, terminated, truncated, info = caldera_env.step("MOVE_NORTH")
+        print(f"Step output: {(obs, reward, terminated, truncated, info)}")    
+        print(f"Agent position: {tuple(obs['position'])}")
+        print(f"Current depth: {caldera_env.perform_sample()[1]:.2f}")
+   
+    # move west 
+    number_of_west_moves = 10
+    for i in range(number_of_west_moves):
+        print(f"Moving west=step {i}")
+        obs, reward, terminated, truncated, info = caldera_env.step("MOVE_WEST")
+        print(f"Step output: {(obs, reward, terminated, truncated, info)}")    
+        print(f"Agent position: {tuple(obs['position'])}")
+        print(f"Current depth: {caldera_env.perform_sample()[1]:.2f}")
+   
+    i = 10
     path = [caldera_env.position.copy()]
-    while i < 100:
+    while i < -1:
         next_action = np.random.choice(ACTION_NAMES)
         obs, reward, terminated, truncated, info = caldera_env.step(next_action)
 
@@ -247,26 +285,26 @@ def main_visual():
         path.append(caldera_env.position.copy())
         print(f"Step output: {(obs, reward, terminated, truncated, info)}")
         print(f"Agent position: {tuple(obs['position'])}")
-        print(f"Current depth: {current_depth}")
+        print(f"Current depth: {current_depth[1]:.2f}")
         i += 1
         if terminated or truncated:
             print("Episode finished.")
             break
-    fig, _ = caldera_env.visualize_caldera(show_grid_lines=True,show_agent_path=False)
-    #fig, _ = caldera_env.visualize_caldera(agent_path=path,show_grid_lines=True)
+    fig, _ = caldera_env.visualize_caldera(show_grid_lines=True,show_agent_path=True)
+    ##fig, _ = caldera_env.visualize_caldera(agent_path=path,show_grid_lines=True)
     plt.show()
 
 
 
 def visualize_default_caldera_with_grid_lines():
-    caldera_env = CalderaEnv(initial_position=(60, 20), delta=10)
+    caldera_env = CalderaEnv(initial_position=(60, 20), sampling_res=10)
 
     fig, _ = caldera_env.visualize_caldera(show_grid_lines=True)
     plt.show()
 
 
 if __name__ == "__main__":
-    main_stochastic()
-    #main()    
+    #main_stochastic()
+    main_test_all()    
     #visualize_default_caldera_with_grid_lines()
     #main_visual()
