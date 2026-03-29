@@ -301,7 +301,8 @@ def visualize_default_caldera_with_grid_lines():
 
     fig, _ = caldera_env.visualize_caldera(show_grid_lines=True)
     plt.show()
-
+ 
+ 
 
 if __name__ == "__main__":
     #main_stochastic()
