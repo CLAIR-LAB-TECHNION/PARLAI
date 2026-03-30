@@ -26,7 +26,7 @@ def bivariate_normal(params: BivariateNormalStruct):
     #makes the value highest near (mux, muy) and decay smoothly away from it
     return norm * np.exp(-(x_term + y_term))
 
-
+# returns True if the position is within the bounds of the map, False otherwise
 def validate_bounds(
     position: Tuple[int, int],
     max_position: np.ndarray,

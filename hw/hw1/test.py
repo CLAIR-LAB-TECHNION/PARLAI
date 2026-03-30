@@ -101,6 +101,13 @@ def main():
     dim_x = 1000
     dim_y = 1000
     initial_position = (10, 45)
+    other_vehicles = [
+        ((50, 200), 8 * sampling_res),
+        ((200, 200), 8 * sampling_res),
+        ((300, 150), 8 * sampling_res),
+        ((100, 150), 8 * sampling_res),
+        ((200, 400), 8 * sampling_res),
+    ]
 
     
     # Default parameters for the three pits in the caldera, along with their weights that control how deep they are.
@@ -119,15 +126,10 @@ def main():
         movement_size=sampling_res,
         initial_position=initial_position,
         max_energy=1000,
+        other_vehicles=other_vehicles,
     )
 
     current_depth = caldera_env.perform_sample()
-    caldera_env.add_vehicle((50, 200), vehicle_size=8 * sampling_res)
-    caldera_env.add_vehicle((200, 200), vehicle_size=8 * sampling_res)
-    caldera_env.add_vehicle((300, 150), vehicle_size=8 * sampling_res)
-    caldera_env.add_vehicle((100, 150), vehicle_size=8 * sampling_res)
-    caldera_env.add_vehicle((200, 400), vehicle_size=8 * sampling_res)
-
 
     print(f"Current depth: {current_depth[1]:.2f}")
     print(f"Is (100, 10) occupied? {caldera_env.is_occupied((10, 10))}")
@@ -203,6 +205,11 @@ def main_test_all():
     dim_x = 100
     dim_y = 100
     initial_position = (66, 10)
+    other_vehicles = [
+        ((22, 83), 15),
+        ((84, 15), 11),
+        ((40, 30), 30),
+    ]
 
     
     # Default parameters for the three pits in the caldera, along with their weights that control how deep they are.
@@ -220,15 +227,12 @@ def main_test_all():
         sampling_res=sampling_res,
         initial_position=initial_position,
         max_energy=1000,
-        movement_size=10,
-        observability_distance=5
+        movement_size=1,
+        observability_distance=5,
+        other_vehicles=other_vehicles,
     )
 
     current_depth = caldera_env.perform_sample()
-    caldera_env.add_vehicle((22, 83), vehicle_size=15)
-    caldera_env.add_vehicle((84, 15), vehicle_size=11)
-    caldera_env.add_vehicle((40, 30), vehicle_size=30)
-
 
     print(f"Current depth: {current_depth[1]:.2f}")
     #print(f"Is (100, 10) occupied? {caldera_env.is_occupied((10, 10))}")
@@ -258,7 +262,7 @@ def main_test_all():
         print(f"Agent position: {tuple(obs['position'])}")
         print(f"Current depth: {caldera_env.perform_sample()[1]:.2f}")
     # move north 
-    number_of_north_moves = 10
+    number_of_north_moves = 100
     for i in range(number_of_north_moves):
         print(f"Moving north=step {i}")
         obs, reward, terminated, truncated, info = caldera_env.step("MOVE_NORTH")
