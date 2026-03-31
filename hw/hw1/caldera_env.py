@@ -113,14 +113,8 @@ class CalderaEnv(gym.Env):
         max_energy: int = 200,
         initial_energy: Optional[int] = None,
         energy_per_step: int = 1,
-        # setting what the agent observes
-        full_observability: bool = False,
-        observability_distance: int = 1,
         other_vehicles: Optional[Sequence[Tuple[Tuple[int, int], int]]] = None,
-        # setting the transition dynamics and reward function
         reward_function: Callable[..., float] = reward_function_explore,
-        stochastic_effet_function: Callable[..., float] = None,        
-        stochastic: bool = False,
     ):
         
         # Initialize the environment with the provided parameters, validating them as needed.        
@@ -175,23 +169,11 @@ class CalderaEnv(gym.Env):
         self.surface_vehicles: Dict[Tuple[int, int], int] = {}
         self._add_vehicles(other_vehicles or [])
         self.agent_path = [tuple(map(int, self.position))]
-        
-        # defining the agent's observability with regard to the other vehicles
-        # under full_obseravability - the agent known where the other vehicles are located
-        # under partial_observability - the agent only has information about the current cell
-        # and can sense if there are obstacles within the surrponding 8 cardinal and intercardinal directions at a distance defined by observability_distance
-        self.full_observability = full_observability
-        if observability_distance < 0:
-            raise ValueError("observability_distance must be non-negative")
-        self.observability_distance = observability_distance
                 
         # initilize the reward and transition dynamics functions      
         if not callable(reward_function):
             raise ValueError("reward_function must be callable")
-        self.reward_function = reward_function        
-        self.stochastic = stochastic
-        if self.stochastic:
-            self.stochastic_effet_function = stochastic_effet_function
+        self.reward_function = reward_function
  
         # The environment exposes a discrete action space for Gym compatibility,
         # but the implementation uses named actions internally.
@@ -260,50 +242,6 @@ class CalderaEnv(gym.Env):
 
         return tuple(sorted(vehicle_locations))
 
-    # for each of the 8 cardinal and intercardinal directions, 
-    # check if there is an obstacle within the observability distance 
-    def get_surrounding_obstacles(
-        self,
-        position: Tuple[int, int],
-    ) -> np.ndarray:
-        
-        
-        # validate the input position    
-        if not validate_bounds(position, self.max_position):
-            raise ValueError(
-                f"map_position must be between (0, 0) and {tuple(self.max_position)}"
-            )
-
-        # convert the position to integers 
-        # and prepare a fixed-size array to store the occupancy status of each direction
-        default_obstacle_value = False
-        occupied_directions = np.full(
-            len(DIRECTION_STEPS),
-            default_obstacle_value,
-            dtype=bool,
-        )
-        
-        # go over the 8 directions and check if there is an obstacle within the observability distance
-        x_pos, y_pos = map(int, position)
-        for direction_index, (step_x, step_y) in enumerate(DIRECTION_STEPS.values()):
-            # for each direction, check the path from position to the maximum observability distance in that direction
-            # cap the path at the map boundaries              
-            # check if there are any obstacles on that path
-            # if there is an obstacle on the path, mark that direction as occupied (otherwise leave it as not occupied)
-            for distance in range(1, self.observability_distance + 1):
-                candidate_position = (
-                    x_pos + (step_x * distance),
-                    y_pos + (step_y * distance),
-                )
-                if not validate_bounds(candidate_position, self.max_position):
-                    break
-
-                if self.is_occupied(candidate_position, include_agent=False):
-                    occupied_directions[direction_index] = True
-                    break
-
-        return occupied_directions
-
     # reset the enviornment including the agent's state
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
@@ -314,55 +252,31 @@ class CalderaEnv(gym.Env):
         self.min_value_observed = float("inf")
         self.agent_path = [tuple(map(int, self.position))]
         info = {}
-        obs = self._get_observation(
-            position=self.position,
-            energy=self.energy,
-            sampled_before=0,
-            value=DEFAULT_VALUE,
-            surrounding_obstacles=self.get_surrounding_obstacles(self.position),
-        )
+        obs = self._get_observation(None)
         return obs, info
 
     # The main method that processes the agent's action, updates the environment state, 
     # computes the reward, and returns the new observation, reward, and done flags according to the Gym API. 
     def step(self, action: Union[int, str]):
 
-        # perform the perscribed action
  
         # Check if the input action is a valid string or integer and converts it to the corresponding string action name.
         normalized_action = self._normalize_action(action)
+        effective_action = self._get_effective_action(normalized_action)
 
-        # if the environment is stochastic, apply the stochastic effect function
-        if self.stochastic and self.stochastic_effet_function is not None:
-            action = self.stochastic_effet_function(self, action)
-
+        # store the input from the action
+        action_result = None
         # perform a move action
-        if normalized_action in MOVEMENT_ACTIONS:
-            self.position = self._perform_move(normalized_action)
+        if effective_action in MOVEMENT_ACTIONS:
+            action_result = self._perform_move(effective_action)
+            self.position = action_result
 
         # perform a sample action
-        if normalized_action == SAMPLE:
-            sampled_before, sampled_value = self.perform_sample()
+        if effective_action == SAMPLE:
+            action_result = self.perform_sample()
               
         # get the observation after performing the action
-        obs = self._get_observation(
-            position=self.position,
-            energy=self.energy,
-            sampled_before=(
-                sampled_before
-                if normalized_action == SAMPLE
-                else int(
-                    position_to_indices(self.position, self.sampling_res)
-                    in self.sampled_cells
-                )
-            ),
-            value=(
-                sampled_value
-                if normalized_action == SAMPLE
-                else DEFAULT_VALUE
-            ),
-            surrounding_obstacles=self.get_surrounding_obstacles(self.position),
-        )
+        obs = self._get_observation(action_result)
         assert self.observation_space.contains(obs)
 
 
@@ -406,7 +320,7 @@ class CalderaEnv(gym.Env):
         self.min_value_observed = min(self.min_value_observed, sampled_value)
 
         return sampled_before, sampled_value
-    def visualize_caldera(
+    def visualize(
         self,
         agent_path: Optional[Sequence[Tuple[int, int]]] = None,
         show_gaussian_centers: bool = False,
@@ -548,26 +462,28 @@ class CalderaEnv(gym.Env):
                 shape=(),
                 dtype=np.float64,
             ),
-            "surrounding_obstacles": spaces.MultiBinary(8),
-        }    
+        }
 
         return spaces.Dict(observation_space)
 
     def _get_observation(
         self,
-        position: Sequence[int],
-        energy: int,
-        sampled_before: int,
-        value: float,
-        surrounding_obstacles: Sequence[bool],
+        action_result: Optional[Union[np.ndarray, Tuple[int, float]]],
     ):
+        if isinstance(action_result, tuple):
+            sampled_before, value = action_result
+        else:
+            sampled_before = int(
+                position_to_indices(self.position, self.sampling_res) in self.sampled_cells
+            )
+            value = DEFAULT_VALUE
+
         observation = {
-            "position": np.asarray(position, dtype=np.int64),
-            "energy": int(energy),
+            "position": np.asarray(self.position, dtype=np.int64),
+            "energy": int(self.energy),
             "sampled_before": int(sampled_before),
             "value": np.float64(value),
-            "surrounding_obstacles": np.asarray(surrounding_obstacles, dtype=np.bool_),
-        }     
+        }
 
         return observation
 
@@ -584,6 +500,9 @@ class CalderaEnv(gym.Env):
             return ACTION_NAMES[int(action)]
 
         raise ValueError(f"Invalid action: {action}")
+
+    def _get_effective_action(self, action: str) -> str:
+        return action
 
     def _perform_move(self, action: str) -> np.ndarray:
         
@@ -617,4 +536,96 @@ class CalderaEnv(gym.Env):
         next_position = np.array(proposed_position, dtype=np.int64)
 
         return next_position
-    
+
+# A variant of the CalderaEnv with stochastic transition effects.
+class SCalderaEnv(CalderaEnv):
+    """Caldera environment with stochastic transition effects enabled."""
+
+    def __init__(
+        self,
+        *args,
+        stochastic_effet_function: Callable[..., float] = stochastic_effet_wrong_turn,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.stochastic_effet_function = stochastic_effet_function
+
+    def _get_effective_action(self, action: str) -> str:
+        if self.stochastic_effet_function is None:
+            return action
+        return self.stochastic_effet_function(self, action)
+
+
+class POCalderaEnv(CalderaEnv):
+    """Caldera environment configured for partial observability."""
+
+    def __init__(
+        self,
+        *args,
+        full_observability: bool = False,
+        observability_distance: int = 1,
+        **kwargs,
+    ):
+        self.full_observability = full_observability
+        if observability_distance < 0:
+            raise ValueError("observability_distance must be non-negative")
+        self.observability_distance = observability_distance
+        super().__init__(*args, **kwargs)
+
+    def _get_observation_space(self):
+        observation_space = super()._get_observation_space()
+        observation_space.spaces["surrounding_obstacles"] = spaces.MultiBinary(8)
+        return observation_space
+
+    def _get_observation(
+        self,
+        action_result: Optional[Union[np.ndarray, Tuple[int, float]]],
+    ):
+        observation = super()._get_observation(action_result)
+        observation["surrounding_obstacles"] = np.asarray(
+            self._get_surrounding_obstacles(tuple(map(int, self.position))),
+            dtype=np.bool_,
+        )
+        return observation
+
+    # for each of the 8 cardinal and intercardinal directions,
+    # check if there is an obstacle within the observability distance
+    def _get_surrounding_obstacles(
+        self,
+        position: Tuple[int, int],
+    ) -> np.ndarray:
+        # validate the input position
+        if not validate_bounds(position, self.max_position):
+            raise ValueError(
+                f"map_position must be between (0, 0) and {tuple(self.max_position)}"
+            )
+
+        # convert the position to integers
+        # and prepare a fixed-size array to store the occupancy status of each direction
+        default_obstacle_value = False
+        occupied_directions = np.full(
+            len(DIRECTION_STEPS),
+            default_obstacle_value,
+            dtype=bool,
+        )
+
+        # go over the 8 directions and check if there is an obstacle within the observability distance
+        x_pos, y_pos = map(int, position)
+        for direction_index, (step_x, step_y) in enumerate(DIRECTION_STEPS.values()):
+            # for each direction, check the path from position to the maximum observability distance in that direction
+            # cap the path at the map boundaries
+            # check if there are any obstacles on that path
+            # if there is an obstacle on the path, mark that direction as occupied (otherwise leave it as not occupied)
+            for distance in range(1, self.observability_distance + 1):
+                candidate_position = (
+                    x_pos + (step_x * distance),
+                    y_pos + (step_y * distance),
+                )
+                if not validate_bounds(candidate_position, self.max_position):
+                    break
+
+                if self.is_occupied(candidate_position, include_agent=False):
+                    occupied_directions[direction_index] = True
+                    break
+
+        return occupied_directions

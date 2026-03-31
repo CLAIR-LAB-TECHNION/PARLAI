@@ -10,7 +10,9 @@ from implementation import (
     CalderaEnv,
     DEFAULT_PIT_PARAMS,
     DEFAULT_PIT_WEIGHTS,
+    POCalderaEnv,
     SAMPLE,
+    SCalderaEnv,
     stochastic_effet_wrong_turn,
 )
 
@@ -92,7 +94,7 @@ def main_lawnmower():
     print(f"Total reward: {total_reward:.2f}")
     print(f"Final position: {tuple(caldera_env.position)}")
 
-    fig, _ = caldera_env.visualize_caldera()
+    fig, _ = caldera_env.visualize()
     plt.show()
 
 
@@ -160,7 +162,7 @@ def main():
             print("Episode finished.")
             break
 
-    fig, _ = caldera_env.visualize_caldera(agent_path=path,show_grid_lines=True)
+    fig, _ = caldera_env.visualize(agent_path=path,show_grid_lines=True)
     plt.show()
 
 
@@ -170,7 +172,7 @@ def main_stochastic():
     dim_y = 100
     initial_position = (60, 20)
 
-    caldera_env = CalderaEnv(
+    caldera_env = SCalderaEnv(
         dim_x=dim_x,
         dim_y=dim_y,
         pit_params=DEFAULT_PIT_PARAMS,
@@ -178,7 +180,6 @@ def main_stochastic():
         sampling_res=sampling_res,
         initial_position=initial_position,
         stochastic_effet_function=stochastic_effet_wrong_turn,
-        stochastic=True,
     )
     i = 0
     path = [caldera_env.position.copy()]
@@ -196,7 +197,7 @@ def main_stochastic():
             print("Episode finished.")
             break
 
-    fig, _ = caldera_env.visualize_caldera(agent_path=path,show_grid_lines=True)
+    fig, _ = caldera_env.visualize(agent_path=path,show_grid_lines=True)
     plt.show()
 
 
@@ -222,7 +223,7 @@ def main_test_all():
     #)
     #PIT_WEIGHTS = (16000.0, 22000.0, 18000.0, 50000.0)
 
-    caldera_env = CalderaEnv(
+    caldera_env = POCalderaEnv(
         dim_x=dim_x,
         dim_y=dim_y,
         sampling_res=sampling_res,
@@ -295,7 +296,7 @@ def main_test_all():
         if terminated or truncated:
             print("Episode finished.")
             break
-    fig, _ = caldera_env.visualize_caldera(show_grid_lines=True,show_agent_path=True)
+    fig, _ = caldera_env.visualize(show_grid_lines=True,show_agent_path=True)
     ##fig, _ = caldera_env.visualize_caldera(agent_path=path,show_grid_lines=True)
     plt.show()
 
@@ -304,13 +305,13 @@ def main_test_all():
 def visualize_default_caldera_with_grid_lines():
     caldera_env = CalderaEnv(initial_position=(60, 20), sampling_res=10)
 
-    fig, _ = caldera_env.visualize_caldera(show_grid_lines=True)
+    fig, _ = caldera_env.visualize(show_grid_lines=True)
     plt.show()
  
  
 
 if __name__ == "__main__":
-    #main_stochastic()
-    main_test_all()    
+    main_stochastic()
+    #ain_test_all()    
     #visualize_default_caldera_with_grid_lines()
     #main_visual()
