@@ -11,6 +11,7 @@ from caldera_env import (
     MOVE_NORTH,
     MOVE_SOUTH,
     MOVE_WEST,
+    SAMPLE,
     validate_bounds,
 )
 
@@ -25,6 +26,23 @@ def stochastic_effet_wrong_turn(env, action, success_probability=0.8):
         if np.random.random() >= success_probability:
             effective_action = env.WRONG_TURN_ACTION[action]
     return effective_action
+
+
+def reward_function_explore(
+    env,
+    action,
+    obs
+) -> float:
+    reward = 0
+    if action != SAMPLE:
+        reward = -0.1
+
+    if action == SAMPLE:
+        if obs["sampled_before"]:
+            reward = -0.5
+        else:
+            reward = 1.0
+    return reward
 
 
 class SCalderaEnv(CalderaEnv):

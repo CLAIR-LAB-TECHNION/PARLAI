@@ -53,22 +53,12 @@ ACTION_TO_INDEX = {action_name: index for index, action_name in enumerate(ACTION
 MOVEMENT_ACTIONS = (MOVE_NORTH, MOVE_SOUTH, MOVE_EAST, MOVE_WEST)
 
 
-# A simple reward function that encourages exploration by giving a positive reward for sampling new locations and a negative reward for sampling the same location or taking movement actions.
-def reward_function_explore(
+def default_reward_function(
     env,
     action,
     obs
 ) -> float:
-    reward = 0
-    if action != SAMPLE:
-        reward = -0.1
-
-    if action == SAMPLE:
-        if obs["sampled_before"]:
-            reward = -0.5
-        else:    
-            reward = 1.0
-    return reward    
+    return -0.1
 
 # The main environment class that simulates the caldera and the agent's interactions with it.
 class CalderaEnv(gym.Env):
@@ -77,7 +67,7 @@ class CalderaEnv(gym.Env):
         # the map dimensions
         dim_x: int = 100, 
         dim_y: int = 100, 
-        # the model for the geolofical features of the caldera, which determine the depth at each location
+        # the model for the geological features of the caldera, which determine the depth at each location
         pit_params: Sequence[BivariateNormalStruct] = DEFAULT_PIT_PARAMS, 
         pit_weights: Sequence[float] = DEFAULT_PIT_WEIGHTS,
         # the resolution of the sampling grid, which determines how the map is discretized for sampling.
@@ -85,13 +75,12 @@ class CalderaEnv(gym.Env):
         # the agent features
         initial_position: Tuple[int, int] = (0, 0),
         movement_size: int = 1,               
-        max_energy: int = 200,
-        initial_energy: Optional[int] = None,
+        initial_energy: int = 200,
         energy_per_move: int = 1,
         energy_per_sample: int = 1,
         other_vehicles: Optional[Sequence[Tuple[Tuple[int, int], int]]] = None,
-        end_episode_on_collision: bool = False,
-        reward_function: Callable[..., float] = reward_function_explore,
+        end_episode_on_collision: bool = False, # does the episode end if the agent collides with a vehicle, or is it just blocked from moving into that cell?
+        reward_function: Callable[..., float] = default_reward_function,
     ):
         
         # Initialize the environment with the provided parameters, validating them as needed.        
@@ -114,14 +103,9 @@ class CalderaEnv(gym.Env):
         _, _, self.depth_map = self._generate_caldera_map()
  
         # Initilize the agent parameters and state variables
-        self.max_energy = max_energy
-        self.initial_energy = max_energy if initial_energy is None else initial_energy
+        self.initial_energy = initial_energy 
         self.energy_per_move = energy_per_move
         self.energy_per_sample = energy_per_sample
-        if self.max_energy < 0:
-            raise ValueError("max_energy must be non-negative")
-        if not 0 <= self.initial_energy <= self.max_energy:
-            raise ValueError("initial_energy must be between 0 and max_energy")
         if self.energy_per_move <= 0:
             raise ValueError("energy_per_move must be positive")
         if self.energy_per_sample <= 0:
@@ -152,10 +136,11 @@ class CalderaEnv(gym.Env):
         self.min_value_observed = float("inf")
         
 
-        # setting the obstacles on the surface, which are represented as vehicles with a certain size. The environment provides methods to add vehicles and check for occupancy,
-        #  which are used to determine if the agent can move to a certain cell or if it is blocked by an obstacle.    
+        # setting the obstacles on the surface, which are represented as vehicles with a certain size.
+        # The environment provides methods to add and remove vehicles and check for occupancy,
+        # which are used to determine if the agent can move to a certain cell or if it is blocked by an obstacle.    
         self.surface_vehicles: Dict[Tuple[int, int], int] = {}
-        self._add_vehicles(other_vehicles or [])
+        self.add_vehicles(other_vehicles or [])
         self.agent_path = [tuple(map(int, self.position))]
                 
         # initilize the reward and transition dynamics functions      
@@ -167,11 +152,17 @@ class CalderaEnv(gym.Env):
         # but the implementation uses named actions internally.
         self.action_space = self._get_action_space()
 
-        # The observation space includes the agent's current position, remaining energy, and whether the current cell has been sampled before.        
+        # The observation space is a dictionary containing the agent's position, remaining energy, whether the current cell has been sampled before, and the value of the current cell.
         self.observation_space = self._get_observation_space()
+
+    def get_max_value_observed(self) -> float:
+        return self.max_value_observed
+
+    def get_min_value_observed(self) -> float:
+        return self.min_value_observed
     
     # Method to add vehicles to the surface, validating each position and size.
-    def _add_vehicles(
+    def add_vehicles(
         self,
         other_vehicles: Sequence[Tuple[Tuple[int, int], int]],
     ) -> None:
@@ -191,18 +182,31 @@ class CalderaEnv(gym.Env):
 
             self.surface_vehicles[tuple(map(int, bottom_right_position))] = vehicle_size
 
-    # Checks if the position is occupied by another vehicle, 
+    # Method to remove a vehicle from the surface by its bottom-right position.
+    def remove_vehicle(
+        self,
+        bottom_right_position: Tuple[int, int],
+    ) -> None:
+        if not validate_bounds(bottom_right_position, self.max_position):
+            raise ValueError("Vehicle position must be within the map dimensions")
+
+        validated_position = tuple(map(int, bottom_right_position))
+        if validated_position not in self.surface_vehicles:
+            print(f"No vehicle found at position {validated_position}")
+            return
+
+        del self.surface_vehicles[validated_position]
+
+    # Checks if the position is occupied by another vehicle,
     # with an option to include the agent's own position in the check.
-    # This is used to determine if a movement action would be blocked by an obstacle.   
+    # Cells outside the map are treated as occupied.
     def is_occupied(
         self,
         cell: Tuple[int, int],
         include_agent: bool = False,
     ) -> bool:
         if not validate_bounds(cell, self.max_position):
-            raise ValueError(
-                f"cell must be between (0, 0) and {tuple(self.max_position)}"
-            )
+            return True
         validated_cell = tuple(map(int, cell))
 
         if include_agent and validated_cell == tuple(map(int, self.position)):
@@ -250,96 +254,93 @@ class CalderaEnv(gym.Env):
 
     # The main method that processes the agent's action, updates the environment state, 
     # computes the reward, and returns the new observation, reward, and done flags according to the Gym API. 
+    # step returns the observation, reward, terminated, truncated, and info as expected by Gym environments.
     def step(self, action: Union[int, str]):
 
- 
+        # prepare the info dictionary for any information to return.
+        info = {}    
         # Check if the input action is a valid string or integer and converts it to the corresponding string action name.
         normalized_action = self._normalize_action(action)
+        # get the relevant energy cost
         action_energy_cost = self._get_action_energy_cost(normalized_action)
+        # if the agent does not have enough energy to perform the action, 
+        # the episode is terminated and a reward of 0 is given, 
+        # with the info dictionary containing details about the energy depletion.
         if self.energy < action_energy_cost:
             obs = self._get_observation(None)
             if not self.observation_space.contains(obs):
-                raise ValueError(
-                    "Observation is outside observation_space. "
-                    f"obs={obs}, observation_space={self.observation_space}"
-                )
+                raise ValueError("Observation is outside observation_space. "f"obs={obs}, observation_space={self.observation_space}")
             info = {
                 "reason": "insufficient_energy",
                 "required_energy": int(action_energy_cost),
                 "remaining_energy": int(self.energy),
             }
+            #return observation, reward, terminated, truncated, and info
             return obs, 0.0, True, False, info
 
+        # the action to perform (can be overriden by subclasses to implement stochasticity or other effects)
         effective_action = self._get_effective_action(normalized_action)
 
-        # store the input from the action
+        # perform the action
         action_result = None
         collision_occurred = False
-        # perform a move action
+        # move
         if effective_action in MOVEMENT_ACTIONS:
             next_position, collision_occurred = self._perform_move(effective_action)
-            self.position = next_position
+            self.position = next_position            
+            # update energy based on the energy consumed by the action
+            self.energy -= action_energy_cost
 
-
-        # perform a sample action
+        # sample
         if effective_action == SAMPLE:
-            action_result = self.perform_sample()
+            action_result = self._get_sample()
+            sampled_before, _ = action_result
+            # update energy based on the energy consumed by the action
+            # only if the cell has not been sampled before, we consume energy for the sampling action 
+            # (note that the agent should be penalized for trying to sample the same cell repeatedly,
+            #  but we don't want to consume energy for an action that has no effect)
+            if not sampled_before:
+                self.energy -= action_energy_cost
+            else:
+                info.update(
+                    {"message": "The cell the agent was trying to sample was already sampled."}
+                )
 
         # record the agent's path
         current_position = tuple(map(int, self.position))
         if current_position != self.agent_path[-1]:
             self.agent_path.append(current_position)
 
-        # update energy based on the energy consumed by the action
-        self.energy -= action_energy_cost
 
         # get the observation after performing the action and consuming energy
         obs = self._get_observation(action_result)
         if not self.observation_space.contains(obs):
-            raise ValueError(
-                "Observation is outside observation_space. "
-                f"obs={obs}, observation_space={self.observation_space}"
-            )
+            raise ValueError("Observation is outside observation_space. " f"obs={obs}, observation_space={self.observation_space}")
 
         # compute the reward based on the action taken and the resulting observation using the provided reward function.
-        raw_reward = self.reward_function(self, normalized_action, obs)
-        if isinstance(raw_reward, bool) or not isinstance(raw_reward, Real):
-            raise TypeError(
-                "Reward function must return a real number. "
-                f"got {raw_reward!r} of type {type(raw_reward).__name__} "
-                f"for action={normalized_action}, obs={obs}"
-            )
-        reward = float(raw_reward)
-        if not np.isfinite(reward):
-            raise ValueError(
-                "Reward function returned a non-finite value. "
-                f"got {reward!r} for action={normalized_action}, obs={obs}"
-            )
-
+        reward = float(self.reward_function(self, normalized_action, obs))
+       
         # check if the episode is terminated due to energy depletion or other conditions, 
-        # and prepare the info dictionary for any additional information to return.
         terminated = self.energy == 0 or collision_occurred
         truncated = False
-        info = {}
-
-
-      
+     
         # return the observation, reward, terminated, truncated, and info as expected by Gym environments 
         return obs, reward, terminated, truncated, info
     
-    # The function that performs the sampling action, 
     # checking if the current cell has been sampled before and returning the appropriate value. 
-    # It also updates the sampled_cells dictionary to keep track of which cells have been sampled and their values.
-    def perform_sample(self) -> Tuple[int, float]:
-        grid_cell = position_to_indices(self.position, self.sampling_res)
-        sampled_before = int(grid_cell in self.sampled_cells)
+    def _get_sample(self) -> Tuple[int, float]:
+        # the sampling process is based on the sampling resolution, 
+        # and the agent can only sample at the bottom left corner of these grid cells.
+        sampling_grid_cell = position_to_indices(self.position, self.sampling_res)
+        sampled_before = int(sampling_grid_cell in self.sampled_cells)
         if not sampled_before:
-            sampled_value = float(self._get_value(grid_cell))
+            sampled_value = float(self._get_value(sampling_grid_cell))
             # the value of the grid cell is stored 
-            self.sampled_cells[grid_cell] = sampled_value
+            self.sampled_cells[sampling_grid_cell] = sampled_value
         else:
-            sampled_value = float(self.sampled_cells[grid_cell])
+            sampled_value = float(self.sampled_cells[sampling_grid_cell])
 
+        # update the max and min values observed so far for potential use in reward shaping or analysis.
         self.max_value_observed = max(self.max_value_observed, sampled_value)
         self.min_value_observed = min(self.min_value_observed, sampled_value)
 
@@ -478,7 +479,7 @@ class CalderaEnv(gym.Env):
                 shape=(2,),
                 dtype=np.int64,
             ),
-            "energy": spaces.Discrete(self.max_energy + 1),
+            "energy": spaces.Discrete(self.initial_energy + 1),
             "sampled_before": spaces.Discrete(2),
             "value": spaces.Box(
                 low=np.array(-np.inf, dtype=np.float64),
@@ -532,9 +533,12 @@ class CalderaEnv(gym.Env):
 
         raise ValueError(f"Invalid action: {action}")
 
+    # This method can be overridden by subclasses to implement stochastic effects or other modifications to the action before it is executed.
     def _get_effective_action(self, action: str) -> str:
         return action
 
+    # Performs the movement action by calculating the proposed new position based on the action and movement size,
+    # checking for collisions with vehicles along the path, and updating the agent's position if the 
     def _perform_move(self, action: str) -> Tuple[np.ndarray, bool]:
         
         if action not in MOVEMENT_ACTIONS:

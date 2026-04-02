@@ -34,7 +34,7 @@ def validate_bounds(
     x_pos, y_pos = map(int, position)
     return 0 <= x_pos <= max_position[0] and 0 <= y_pos <= max_position[1]
 
-
+# returns the indices of the position in the grid given the sampling resolution
 def position_to_indices(
     position: Tuple[int, int],
     sampling_res: int,
@@ -42,7 +42,7 @@ def position_to_indices(
     x_pos, y_pos = map(int, position)
     return y_pos // sampling_res, x_pos // sampling_res
 
-
+# returns whether a position is within a bounding box defined by its bottom left corner and size
 def is_position_within_bounding_box(
     position: Tuple[int, int],
     bottom_left_position: Tuple[int, int],

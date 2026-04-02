@@ -57,7 +57,7 @@ def main_lawnmower():
         sampling_res=sampling_res,
         initial_position=initial_position,
     )
-    max_energy = compute_lawnmower_energy(probe_env)
+    initial_energy = compute_lawnmower_energy(probe_env)
 
     caldera_env = CalderaEnv(
         dim_x=dim_x,
@@ -66,7 +66,7 @@ def main_lawnmower():
         pit_weights=DEFAULT_PIT_WEIGHTS,
         sampling_res=sampling_res,
         initial_position=initial_position,
-        max_energy=max_energy,
+        initial_energy=initial_energy,
     )
 
     actions = build_lawnmower_actions(caldera_env)
@@ -125,11 +125,11 @@ def main():
         sampling_res=sampling_res,
         movement_size=sampling_res,
         initial_position=initial_position,
-        max_energy=1000,
+        initial_energy=1000,
         other_vehicles=other_vehicles,
     )
 
-    current_depth = caldera_env.perform_sample()
+    current_depth = caldera_env._get_sample()
 
     print(f"Current depth: {current_depth[1]:.2f}")
     print(f"Is (100, 10) occupied? {caldera_env.is_occupied((10, 10))}")
@@ -150,9 +150,9 @@ def main():
         next_action = np.random.choice(ACTION_NAMES)
         obs, reward, terminated, truncated, info = caldera_env.step(next_action)
 
-        current_depth = caldera_env.perform_sample()
+        current_depth = caldera_env._get_sample()
         path.append(caldera_env.position.copy())
-        print(f"Step output: {(obs, reward, terminated, truncated, info)}")
+        print(f"terminated is: {terminated}")
         print(f"Agent position: {tuple(obs['position'])}")
         print(f"Current depth: {current_depth[1]:.2f}")
         i += 1
@@ -185,7 +185,7 @@ def main_stochastic():
         next_action = np.random.choice(ACTION_NAMES)
         obs, reward, terminated, truncated, info = caldera_env.step(next_action)
 
-        current_depth = caldera_env.perform_sample()
+        current_depth = caldera_env._get_sample()
         path.append(caldera_env.position.copy())
         print(f"Step output: {(obs, reward, terminated, truncated, info)}")
         print(f"Agent position: {tuple(obs['position'])}")
@@ -226,15 +226,13 @@ def main_test_all():
         dim_y=dim_y,
         sampling_res=sampling_res,
         initial_position=initial_position,
-        max_energy=1000,
         movement_size=1,
         observability_distance=5,
         other_vehicles=other_vehicles,
         end_episode_on_collision=True,
 
     )
-
-    current_depth = caldera_env.perform_sample()
+    current_depth = caldera_env._get_sample()
 
     print(f"Current depth: {current_depth[1]:.2f}")
     #print(f"Is (100, 10) occupied? {caldera_env.is_occupied((10, 10))}")
@@ -253,7 +251,7 @@ def main_test_all():
     obs, reward, terminated, truncated, info = caldera_env.step("MOVE_NORTH")
     print(f"Step output: {(obs, reward, terminated, truncated, info)}")    
     print(f"Agent position: {tuple(obs['position'])}")
-    print(f"Current depth: {caldera_env.perform_sample()[1]:.2f}")
+    print(f"Current depth: {caldera_env._get_sample()[1]:.2f}")
 
     # move east 
     number_of_east_moves = 10
@@ -262,15 +260,16 @@ def main_test_all():
         obs, reward, terminated, truncated, info = caldera_env.step("MOVE_EAST")
         print(f"Step output: {(obs, reward, terminated, truncated, info)}")    
         print(f"Agent position: {tuple(obs['position'])}")
-        print(f"Current depth: {caldera_env.perform_sample()[1]:.2f}")
+        print(f"Current depth: {caldera_env._get_sample()[1]:.2f}")
     # move north 
     number_of_north_moves = 1000
     for i in range(number_of_north_moves):
         print(f"Moving north=step {i}")
         obs, reward, terminated, truncated, info = caldera_env.step("MOVE_NORTH")
         print(f"Step output: {(obs, reward, terminated, truncated, info)}")    
+        print(f"terminated is: {terminated}")
         print(f"Agent position: {tuple(obs['position'])}")
-        print(f"Current depth: {caldera_env.perform_sample()[1]:.2f}")
+        print(f"Current depth: {caldera_env._get_sample()[1]:.2f}")
    
     # move west 
     number_of_west_moves = 10
@@ -279,7 +278,7 @@ def main_test_all():
         obs, reward, terminated, truncated, info = caldera_env.step("MOVE_WEST")
         print(f"Step output: {(obs, reward, terminated, truncated, info)}")    
         print(f"Agent position: {tuple(obs['position'])}")
-        print(f"Current depth: {caldera_env.perform_sample()[1]:.2f}")
+        print(f"Current depth: {caldera_env._get_sample()[1]:.2f}")
    
     i = 10
     path = [caldera_env.position.copy()]
@@ -287,7 +286,7 @@ def main_test_all():
         next_action = np.random.choice(ACTION_NAMES)
         obs, reward, terminated, truncated, info = caldera_env.step(next_action)
 
-        current_depth = caldera_env.perform_sample()
+        current_depth = caldera_env._get_sample()
         path.append(caldera_env.position.copy())
         print(f"Step output: {(obs, reward, terminated, truncated, info)}")
         print(f"Agent position: {tuple(obs['position'])}")
