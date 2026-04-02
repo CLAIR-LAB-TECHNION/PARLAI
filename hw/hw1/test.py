@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from utils import BivariateNormalStruct
-from implementation import (
+from caldera_env import (
     ACTION_NAMES,
     MOVE_EAST,
     MOVE_SOUTH,
@@ -10,11 +10,9 @@ from implementation import (
     CalderaEnv,
     DEFAULT_PIT_PARAMS,
     DEFAULT_PIT_WEIGHTS,
-    POCalderaEnv,
     SAMPLE,
-    SCalderaEnv,
-    stochastic_effet_wrong_turn,
 )
+from to_implement import POCalderaEnv, SCalderaEnv, stochastic_effet_wrong_turn
 
 
 def build_lawnmower_actions(env: CalderaEnv) -> list[str]:
@@ -232,6 +230,8 @@ def main_test_all():
         movement_size=1,
         observability_distance=5,
         other_vehicles=other_vehicles,
+        end_episode_on_collision=True,
+
     )
 
     current_depth = caldera_env.perform_sample()
@@ -264,7 +264,7 @@ def main_test_all():
         print(f"Agent position: {tuple(obs['position'])}")
         print(f"Current depth: {caldera_env.perform_sample()[1]:.2f}")
     # move north 
-    number_of_north_moves = 100
+    number_of_north_moves = 1000
     for i in range(number_of_north_moves):
         print(f"Moving north=step {i}")
         obs, reward, terminated, truncated, info = caldera_env.step("MOVE_NORTH")
@@ -312,6 +312,6 @@ def visualize_default_caldera_with_grid_lines():
 
 if __name__ == "__main__":
     main_stochastic()
-    #ain_test_all()    
+    main_test_all()    
     #visualize_default_caldera_with_grid_lines()
     #main_visual()

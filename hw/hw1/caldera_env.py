@@ -1,4 +1,5 @@
 from dataclasses import replace
+from numbers import Real
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import gymnasium as gym
@@ -8,24 +9,14 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
 
-try:
-    from .utils import (
-        BivariateNormalStruct,
-        bivariate_normal,
-        generate_path,
-        is_position_within_bounding_box,
-        position_to_indices,
-        validate_bounds,
-    )
-except ImportError:
-    from utils import (
-        BivariateNormalStruct,
-        bivariate_normal,
-        generate_path,
-        is_position_within_bounding_box,
-        position_to_indices,
-        validate_bounds,
-    )
+from utils import (
+    BivariateNormalStruct,
+    bivariate_normal,
+    generate_path,
+    is_position_within_bounding_box,
+    position_to_indices,
+    validate_bounds,
+)
 
 
 # Default parameters for the three pits in the caldera, along with their weights that control how deep they are.
@@ -60,12 +51,6 @@ SAMPLE = "SAMPLE"
 ACTION_NAMES = (MOVE_NORTH, MOVE_SOUTH, MOVE_EAST, MOVE_WEST, SAMPLE)
 ACTION_TO_INDEX = {action_name: index for index, action_name in enumerate(ACTION_NAMES)}
 MOVEMENT_ACTIONS = (MOVE_NORTH, MOVE_SOUTH, MOVE_EAST, MOVE_WEST)
-WRONG_TURN_ACTION = {
-    MOVE_NORTH: MOVE_EAST,
-    MOVE_EAST: MOVE_SOUTH,
-    MOVE_SOUTH: MOVE_WEST,
-    MOVE_WEST: MOVE_NORTH,
-}
 
 
 # A simple reward function that encourages exploration by giving a positive reward for sampling new locations and a negative reward for sampling the same location or taking movement actions.
@@ -84,16 +69,6 @@ def reward_function_explore(
         else:    
             reward = 1.0
     return reward    
-    
-def stochastic_effet_none(env,action):
-    return action
-
-def stochastic_effet_wrong_turn(env,action,success_probability=0.8):
-    effective_action = action
-    if action in MOVEMENT_ACTIONS:
-        if np.random.random() >= success_probability:
-            effective_action = WRONG_TURN_ACTION[action]
-    return effective_action    
 
 # The main environment class that simulates the caldera and the agent's interactions with it.
 class CalderaEnv(gym.Env):
@@ -112,8 +87,10 @@ class CalderaEnv(gym.Env):
         movement_size: int = 1,               
         max_energy: int = 200,
         initial_energy: Optional[int] = None,
-        energy_per_step: int = 1,
+        energy_per_move: int = 1,
+        energy_per_sample: int = 1,
         other_vehicles: Optional[Sequence[Tuple[Tuple[int, int], int]]] = None,
+        end_episode_on_collision: bool = False,
         reward_function: Callable[..., float] = reward_function_explore,
     ):
         
@@ -139,9 +116,19 @@ class CalderaEnv(gym.Env):
         # Initilize the agent parameters and state variables
         self.max_energy = max_energy
         self.initial_energy = max_energy if initial_energy is None else initial_energy
-        self.energy_per_step = energy_per_step
+        self.energy_per_move = energy_per_move
+        self.energy_per_sample = energy_per_sample
+        if self.max_energy < 0:
+            raise ValueError("max_energy must be non-negative")
+        if not 0 <= self.initial_energy <= self.max_energy:
+            raise ValueError("initial_energy must be between 0 and max_energy")
+        if self.energy_per_move <= 0:
+            raise ValueError("energy_per_move must be positive")
+        if self.energy_per_sample <= 0:
+            raise ValueError("energy_per_sample must be positive")
         self.energy = self.initial_energy
         self.movement_size = movement_size
+        self.end_episode_on_collision = end_episode_on_collision
         
         
         # The positions of the agent and vehicles are in the dimensions of the map
@@ -152,6 +139,7 @@ class CalderaEnv(gym.Env):
             )
         self.initial_position = np.array(list(map(int, initial_position)), dtype=np.int64)
         self.position = self.initial_position.copy()
+
         
         # The sampling process is based on a grid defined by the sampling resolution, 
         # and the agent can only sample at the bottom left corner of these grid cells.
@@ -253,6 +241,11 @@ class CalderaEnv(gym.Env):
         self.agent_path = [tuple(map(int, self.position))]
         info = {}
         obs = self._get_observation(None)
+        if not self.observation_space.contains(obs):
+            raise ValueError(
+                "Observation is outside observation_space. "
+                f"obs={obs}, observation_space={self.observation_space}"
+            )
         return obs, info
 
     # The main method that processes the agent's action, updates the environment state, 
@@ -262,39 +255,70 @@ class CalderaEnv(gym.Env):
  
         # Check if the input action is a valid string or integer and converts it to the corresponding string action name.
         normalized_action = self._normalize_action(action)
+        action_energy_cost = self._get_action_energy_cost(normalized_action)
+        if self.energy < action_energy_cost:
+            obs = self._get_observation(None)
+            if not self.observation_space.contains(obs):
+                raise ValueError(
+                    "Observation is outside observation_space. "
+                    f"obs={obs}, observation_space={self.observation_space}"
+                )
+            info = {
+                "reason": "insufficient_energy",
+                "required_energy": int(action_energy_cost),
+                "remaining_energy": int(self.energy),
+            }
+            return obs, 0.0, True, False, info
+
         effective_action = self._get_effective_action(normalized_action)
 
         # store the input from the action
         action_result = None
+        collision_occurred = False
         # perform a move action
         if effective_action in MOVEMENT_ACTIONS:
-            action_result = self._perform_move(effective_action)
-            self.position = action_result
+            next_position, collision_occurred = self._perform_move(effective_action)
+            self.position = next_position
+
 
         # perform a sample action
         if effective_action == SAMPLE:
             action_result = self.perform_sample()
-              
-        # get the observation after performing the action
-        obs = self._get_observation(action_result)
-        assert self.observation_space.contains(obs)
-
-
-        # compute the reward based on the action taken and the resulting observation using the provided reward function.         
-        reward = float(self.reward_function(self, normalized_action, obs))
-        assert isinstance(reward, (float, int))
-
 
         # record the agent's path
         current_position = tuple(map(int, self.position))
         if current_position != self.agent_path[-1]:
             self.agent_path.append(current_position)
 
-        # update energy usage    
-        self.energy -= self.energy_per_step
+        # update energy based on the energy consumed by the action
+        self.energy -= action_energy_cost
+
+        # get the observation after performing the action and consuming energy
+        obs = self._get_observation(action_result)
+        if not self.observation_space.contains(obs):
+            raise ValueError(
+                "Observation is outside observation_space. "
+                f"obs={obs}, observation_space={self.observation_space}"
+            )
+
+        # compute the reward based on the action taken and the resulting observation using the provided reward function.
+        raw_reward = self.reward_function(self, normalized_action, obs)
+        if isinstance(raw_reward, bool) or not isinstance(raw_reward, Real):
+            raise TypeError(
+                "Reward function must return a real number. "
+                f"got {raw_reward!r} of type {type(raw_reward).__name__} "
+                f"for action={normalized_action}, obs={obs}"
+            )
+        reward = float(raw_reward)
+        if not np.isfinite(reward):
+            raise ValueError(
+                "Reward function returned a non-finite value. "
+                f"got {reward!r} for action={normalized_action}, obs={obs}"
+            )
+
         # check if the episode is terminated due to energy depletion or other conditions, 
         # and prepare the info dictionary for any additional information to return.
-        terminated = self.energy <= 0
+        terminated = self.energy == 0 or collision_occurred
         truncated = False
         info = {}
 
@@ -487,6 +511,13 @@ class CalderaEnv(gym.Env):
 
         return observation
 
+    def _get_action_energy_cost(self, action: str) -> int:
+        if action in MOVEMENT_ACTIONS:
+            return self.energy_per_move
+        if action == SAMPLE:
+            return self.energy_per_sample
+        raise ValueError(f"Unsupported action for energy cost: {action}")
+
     # Helper method to normalize the action input, allowing for both string and integer representations of actions. 
     # This ensures that the environment can handle different formats of action inputs gracefully.
     def _normalize_action(self, action: Union[int, str]) -> str:
@@ -504,7 +535,7 @@ class CalderaEnv(gym.Env):
     def _get_effective_action(self, action: str) -> str:
         return action
 
-    def _perform_move(self, action: str) -> np.ndarray:
+    def _perform_move(self, action: str) -> Tuple[np.ndarray, bool]:
         
         if action not in MOVEMENT_ACTIONS:
             raise ValueError(f"_perform_move only supports movement actions {MOVEMENT_ACTIONS}")
@@ -524,108 +555,21 @@ class CalderaEnv(gym.Env):
         
         if not validate_bounds(proposed_position, self.max_position):
             print(f"Movement out of bounds for {tuple(proposed_position)}. Staying at {tuple(self.position)}")
-            return self.position.copy()
+            return self.position.copy(), False
 
         path_positions = generate_path(tuple(map(int, self.position)), proposed_position)
 
+        collision_occurred = False
         for path_cell in path_positions:
             if self.is_occupied(path_cell, include_agent=False):
-                print(f"Movement blocked by vehicle at {path_cell}. Staying at {tuple(self.position)}")
-                return self.position.copy()
+                if self.end_episode_on_collision:
+                    collision_occurred = True
+                    print(f"Movement collided with vehicle at {path_cell}. Episode terminated.")
+                else:
+                    print(f"Movement blocked by vehicle at {path_cell}. Staying at {tuple(self.position)}")
+                return self.position.copy(), collision_occurred
 
         next_position = np.array(proposed_position, dtype=np.int64)
 
-        return next_position
+        return next_position, collision_occurred
 
-# A variant of the CalderaEnv with stochastic transition effects.
-class SCalderaEnv(CalderaEnv):
-    """Caldera environment with stochastic transition effects enabled."""
-
-    def __init__(
-        self,
-        *args,
-        stochastic_effet_function: Callable[..., float] = stochastic_effet_wrong_turn,
-        **kwargs,
-    ):
-        super().__init__(*args, **kwargs)
-        self.stochastic_effet_function = stochastic_effet_function
-
-    def _get_effective_action(self, action: str) -> str:
-        if self.stochastic_effet_function is None:
-            return action
-        return self.stochastic_effet_function(self, action)
-
-
-class POCalderaEnv(CalderaEnv):
-    """Caldera environment configured for partial observability."""
-
-    def __init__(
-        self,
-        *args,
-        full_observability: bool = False,
-        observability_distance: int = 1,
-        **kwargs,
-    ):
-        self.full_observability = full_observability
-        if observability_distance < 0:
-            raise ValueError("observability_distance must be non-negative")
-        self.observability_distance = observability_distance
-        super().__init__(*args, **kwargs)
-
-    def _get_observation_space(self):
-        observation_space = super()._get_observation_space()
-        observation_space.spaces["surrounding_obstacles"] = spaces.MultiBinary(8)
-        return observation_space
-
-    def _get_observation(
-        self,
-        action_result: Optional[Union[np.ndarray, Tuple[int, float]]],
-    ):
-        observation = super()._get_observation(action_result)
-        observation["surrounding_obstacles"] = np.asarray(
-            self._get_surrounding_obstacles(tuple(map(int, self.position))),
-            dtype=np.bool_,
-        )
-        return observation
-
-    # for each of the 8 cardinal and intercardinal directions,
-    # check if there is an obstacle within the observability distance
-    def _get_surrounding_obstacles(
-        self,
-        position: Tuple[int, int],
-    ) -> np.ndarray:
-        # validate the input position
-        if not validate_bounds(position, self.max_position):
-            raise ValueError(
-                f"map_position must be between (0, 0) and {tuple(self.max_position)}"
-            )
-
-        # convert the position to integers
-        # and prepare a fixed-size array to store the occupancy status of each direction
-        default_obstacle_value = False
-        occupied_directions = np.full(
-            len(DIRECTION_STEPS),
-            default_obstacle_value,
-            dtype=bool,
-        )
-
-        # go over the 8 directions and check if there is an obstacle within the observability distance
-        x_pos, y_pos = map(int, position)
-        for direction_index, (step_x, step_y) in enumerate(DIRECTION_STEPS.values()):
-            # for each direction, check the path from position to the maximum observability distance in that direction
-            # cap the path at the map boundaries
-            # check if there are any obstacles on that path
-            # if there is an obstacle on the path, mark that direction as occupied (otherwise leave it as not occupied)
-            for distance in range(1, self.observability_distance + 1):
-                candidate_position = (
-                    x_pos + (step_x * distance),
-                    y_pos + (step_y * distance),
-                )
-                if not validate_bounds(candidate_position, self.max_position):
-                    break
-
-                if self.is_occupied(candidate_position, include_agent=False):
-                    occupied_directions[direction_index] = True
-                    break
-
-        return occupied_directions
