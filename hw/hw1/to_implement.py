@@ -194,11 +194,9 @@ class POCalderaEnv(CalderaEnv):
         )
         return observation
 
-    def get_vehicle_locations(self, include_agent: bool = False):
-        raise AttributeError(
-            "get_vehicle_locations is not available in POCalderaEnv because the environment is partially observable."
-        )
-
+    def get_invariant_information(self):
+        raise AttributeError("get_invariant_information is not available in POCalderaEnv because the environment is partially observable.")
+     
     # for each of the 8 cardinal and intercardinal directions,
     # check if there is an obstacle within the observability distance
     def _get_surrounding_obstacles(

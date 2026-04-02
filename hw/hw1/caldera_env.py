@@ -231,6 +231,9 @@ class BaseCalderaEnv(gym.Env):
 
         return tuple(sorted(vehicle_locations))
 
+    def get_invariant_information(self):
+        return self.get_vehicle_locations()
+    
     # reset the enviornment including the agent's state
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)

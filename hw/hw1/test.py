@@ -202,7 +202,7 @@ def main_test_all():
     sampling_res = 5
     dim_x = 100
     dim_y = 100
-    initial_position = (66, 10)
+    initial_position = (66, 17)
     other_vehicles = [
         ((22, 83), 15),
         ((84, 15), 11),
@@ -311,5 +311,4 @@ def visualize_default_caldera_with_grid_lines():
 if __name__ == "__main__":
     main_stochastic()
     main_test_all()    
-    #visualize_default_caldera_with_grid_lines()
-    #main_visual()
+    visualize_default_caldera_with_grid_lines()
