@@ -21,7 +21,7 @@ from utils import generate_path, position_to_indices
 def stochastic_effet_none(env, action):
     return action
 
-
+# example stochastic effect function that simulates a wrong turn with a certain probability
 def stochastic_effet_wrong_turn(env, action, success_probability=0.8):
     effective_action = action
     if action in MOVEMENT_ACTIONS:
@@ -30,11 +30,7 @@ def stochastic_effet_wrong_turn(env, action, success_probability=0.8):
     return effective_action
 
 
-def reward_function_explore(
-    env,
-    action,
-    obs
-) -> float:
+def reward_function_explore(env, action, obs) -> float:
     reward = 0
     if action != SAMPLE:
         reward = -0.1
@@ -142,8 +138,8 @@ class CalderaEnv(BaseCalderaEnv):
 
 
 class SCalderaEnv(CalderaEnv):
-    """Caldera environment with stochastic transition effects enabled."""
 
+    """Caldera environment with stochastic transition effects enabled."""
     WRONG_TURN_ACTION = {
         MOVE_NORTH: MOVE_EAST,
         MOVE_EAST: MOVE_SOUTH,
@@ -198,11 +194,16 @@ class POCalderaEnv(CalderaEnv):
         )
         return observation
 
+    def get_vehicle_locations(self, include_agent: bool = False):
+        raise AttributeError(
+            "get_vehicle_locations is not available in POCalderaEnv because the environment is partially observable."
+        )
+
     # for each of the 8 cardinal and intercardinal directions,
     # check if there is an obstacle within the observability distance
     def _get_surrounding_obstacles(
         self,
-        position: Tuple[int, int],
+        position: Tuple[int, int]
     ) -> np.ndarray:
         # validate the input position
         if not validate_bounds(position, self.max_position):
