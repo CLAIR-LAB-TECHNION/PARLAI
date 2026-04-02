@@ -1,6 +1,5 @@
 from dataclasses import replace
-from numbers import Real
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, Optional, Sequence, Tuple, Union
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -12,9 +11,7 @@ from matplotlib.patches import Rectangle
 from utils import (
     BivariateNormalStruct,
     bivariate_normal,
-    generate_path,
     is_position_within_bounding_box,
-    position_to_indices,
     validate_bounds,
 )
 
@@ -60,8 +57,8 @@ def default_reward_function(
 ) -> float:
     return -0.1
 
-# The main environment class that simulates the caldera and the agent's interactions with it.
-class CalderaEnv(gym.Env):
+# Base environment class that implements the transition dynamics and shared helpers.
+class BaseCalderaEnv(gym.Env):
     def __init__(
         self,
         # the map dimensions
@@ -329,22 +326,13 @@ class CalderaEnv(gym.Env):
     
     # checking if the current cell has been sampled before and returning the appropriate value. 
     def _get_sample(self) -> Tuple[int, float]:
-        # the sampling process is based on the sampling resolution, 
-        # and the agent can only sample at the bottom left corner of these grid cells.
-        sampling_grid_cell = position_to_indices(self.position, self.sampling_res)
-        sampled_before = int(sampling_grid_cell in self.sampled_cells)
-        if not sampled_before:
-            sampled_value = float(self._get_value(sampling_grid_cell))
-            # the value of the grid cell is stored 
-            self.sampled_cells[sampling_grid_cell] = sampled_value
-        else:
-            sampled_value = float(self.sampled_cells[sampling_grid_cell])
-
-        # update the max and min values observed so far for potential use in reward shaping or analysis.
-        self.max_value_observed = max(self.max_value_observed, sampled_value)
-        self.min_value_observed = min(self.min_value_observed, sampled_value)
-
-        return sampled_before, sampled_value
+        raise NotImplementedError(
+            "_get_sample must be implemented in to_implement.CalderaEnv"
+        )
+    
+    # Visualization method to plot the depth map of the caldera,
+    # the agent's path, the locations of vehicles, 
+    # and optionally the centers of the pits and grid lines.
     def visualize(
         self,
         agent_path: Optional[Sequence[Tuple[int, int]]] = None,
@@ -471,46 +459,20 @@ class CalderaEnv(gym.Env):
         return spaces.Discrete(n=len(ACTION_NAMES))
 
     # return the structure of the observation space, according to the Gym API.
+    # This is intentionally implemented in to_implement.CalderaEnv.
     def _get_observation_space(self):
-        observation_space = {
-            "position": spaces.Box(
-                low=np.array([0, 0], dtype=np.int64),
-                high=self.max_position.copy(),
-                shape=(2,),
-                dtype=np.int64,
-            ),
-            "energy": spaces.Discrete(self.initial_energy + 1),
-            "sampled_before": spaces.Discrete(2),
-            "value": spaces.Box(
-                low=np.array(-np.inf, dtype=np.float64),
-                high=np.array(np.inf, dtype=np.float64),
-                shape=(),
-                dtype=np.float64,
-            ),
-        }
+        raise NotImplementedError(
+            "_get_observation_space must be implemented in to_implement.CalderaEnv"
+        )
 
-        return spaces.Dict(observation_space)
-
+    # This is intentionally implemented in to_implement.CalderaEnv.
     def _get_observation(
         self,
         action_result: Optional[Union[np.ndarray, Tuple[int, float]]],
     ):
-        if isinstance(action_result, tuple):
-            sampled_before, value = action_result
-        else:
-            sampled_before = int(
-                position_to_indices(self.position, self.sampling_res) in self.sampled_cells
-            )
-            value = DEFAULT_VALUE
-
-        observation = {
-            "position": np.asarray(self.position, dtype=np.int64),
-            "energy": int(self.energy),
-            "sampled_before": int(sampled_before),
-            "value": np.float64(value),
-        }
-
-        return observation
+        raise NotImplementedError(
+            "_get_observation must be implemented in to_implement.CalderaEnv"
+        )
 
     def _get_action_energy_cost(self, action: str) -> int:
         if action in MOVEMENT_ACTIONS:
@@ -540,40 +502,7 @@ class CalderaEnv(gym.Env):
     # Performs the movement action by calculating the proposed new position based on the action and movement size,
     # checking for collisions with vehicles along the path, and updating the agent's position if the 
     def _perform_move(self, action: str) -> Tuple[np.ndarray, bool]:
-        
-        if action not in MOVEMENT_ACTIONS:
-            raise ValueError(f"_perform_move only supports movement actions {MOVEMENT_ACTIONS}")
-
-        x_pos, y_pos = self.position
-
-        if action == MOVE_NORTH:
-            y_pos += self.movement_size
-        elif action == MOVE_SOUTH:
-            y_pos -= self.movement_size
-        elif action == MOVE_WEST:
-            x_pos -= self.movement_size
-        elif action == MOVE_EAST:
-            x_pos += self.movement_size
-
-        proposed_position = (int(x_pos), int(y_pos))
-        
-        if not validate_bounds(proposed_position, self.max_position):
-            print(f"Movement out of bounds for {tuple(proposed_position)}. Staying at {tuple(self.position)}")
-            return self.position.copy(), False
-
-        path_positions = generate_path(tuple(map(int, self.position)), proposed_position)
-
-        collision_occurred = False
-        for path_cell in path_positions:
-            if self.is_occupied(path_cell, include_agent=False):
-                if self.end_episode_on_collision:
-                    collision_occurred = True
-                    print(f"Movement collided with vehicle at {path_cell}. Episode terminated.")
-                else:
-                    print(f"Movement blocked by vehicle at {path_cell}. Staying at {tuple(self.position)}")
-                return self.position.copy(), collision_occurred
-
-        next_position = np.array(proposed_position, dtype=np.int64)
-
-        return next_position, collision_occurred
+        raise NotImplementedError(
+            "_perform_move must be implemented in to_implement.CalderaEnv"
+        )
 
