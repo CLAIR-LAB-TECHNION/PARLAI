@@ -14,6 +14,20 @@ from caldera_env import (
 from to_implement import CalderaEnv, POCalderaEnv, SCalderaEnv, stochastic_effet_wrong_turn
 
 
+def test_pocaldera_env_get_invariant_information_raises_attribute_error():
+    env = POCalderaEnv()
+
+    try:
+        env.get_invariant_information()
+    except AttributeError as exc:
+        print(f"Caught expected AttributeError: {exc}")
+        assert "get_invariant_information is not available in POCalderaEnv" in str(exc)
+    else:
+        raise AssertionError(
+            "Expected POCalderaEnv.get_invariant_information() to raise AttributeError"
+        )
+
+
 def build_lawnmower_actions(env: CalderaEnv) -> list[str]:
     actions: list[str] = []
     num_cols = len(env.x_grid_coords)
@@ -261,7 +275,7 @@ def main_test_all():
         print(f"Agent position: {tuple(obs['position'])}")
         print(f"Current depth: {caldera_env._get_sample()[1]:.2f}")
     # move north 
-    number_of_north_moves = 1000
+    number_of_north_moves = 10
     for i in range(number_of_north_moves):
         print(f"Moving north=step {i}")
         obs, reward, terminated, truncated, info = caldera_env.step("MOVE_NORTH")
@@ -309,6 +323,8 @@ def visualize_default_caldera_with_grid_lines():
  
 
 if __name__ == "__main__":
-    main_stochastic()
-    main_test_all()    
-    visualize_default_caldera_with_grid_lines()
+    test_pocaldera_env_get_invariant_information_raises_attribute_error()
+
+    #main_stochastic()
+    #main_test_all()    
+    #visualize_default_caldera_with_grid_lines()

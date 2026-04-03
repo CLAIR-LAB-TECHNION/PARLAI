@@ -320,8 +320,11 @@ class BaseCalderaEnv(gym.Env):
         # compute the reward based on the action taken and the resulting observation using the provided reward function.
         reward = float(self.reward_function(self, normalized_action, obs))
        
-        # check if the episode is terminated due to energy depletion or other conditions, 
-        terminated = self.energy == 0 or collision_occurred
+        # check if the episode is terminated due to collision or energy depletion
+        terminated = (
+            (collision_occurred and self.end_episode_on_collision)
+            or self.energy == 0
+        )
         truncated = False
      
         # return the observation, reward, terminated, truncated, and info as expected by Gym environments 
@@ -501,6 +504,25 @@ class BaseCalderaEnv(gym.Env):
     # This method can be overridden by subclasses to implement stochastic effects or other modifications to the action before it is executed.
     def _get_effective_action(self, action: str) -> str:
         return action
+
+    # Compute the destination reached by applying a movement action once.
+    def _get_proposed_destination(self, action: str) -> Tuple[int, int]:
+        if action not in MOVEMENT_ACTIONS:
+            raise ValueError(
+                f"_get_proposed_destination only supports movement actions {MOVEMENT_ACTIONS}"
+            )
+
+        x_pos, y_pos = map(int, self.position)
+        if action == MOVE_NORTH:
+            y_pos += self.movement_size
+        elif action == MOVE_SOUTH:
+            y_pos -= self.movement_size
+        elif action == MOVE_WEST:
+            x_pos -= self.movement_size
+        elif action == MOVE_EAST:
+            x_pos += self.movement_size
+
+        return int(x_pos), int(y_pos)
 
     # Performs the movement action by calculating the proposed new position based on the action and movement size,
     # checking for collisions with vehicles along the path, and updating the agent's position if the 
