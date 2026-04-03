@@ -14,8 +14,102 @@ from caldera_env import (
 from to_implement import CalderaEnv, POCalderaEnv, SCalderaEnv, stochastic_effet_wrong_turn
 
 
+def test_pocaldera_env_get_invariant_information_raises_attribute_error():
+    env = POCalderaEnv()
 
-def main_1():
+    try:
+        env.get_invariant_information()
+    except AttributeError as exc:
+        print(f"Caught expected AttributeError: {exc}")
+        assert "get_invariant_information is not available in POCalderaEnv" in str(exc)
+    else:
+        raise AssertionError(
+            "Expected POCalderaEnv.get_invariant_information() to raise AttributeError"
+        )
+
+
+def build_lawnmower_actions(env: CalderaEnv) -> list[str]:
+    actions: list[str] = []
+    num_cols = len(env.x_grid_coords)
+    num_rows = len(env.y_grid_coords)
+
+    for row_index in range(num_rows):
+        horizontal_action = MOVE_EAST if row_index % 2 == 0 else MOVE_WEST
+
+        for col_index in range(num_cols):
+            actions.append(SAMPLE)
+            if col_index < num_cols - 1:
+                actions.append(horizontal_action)
+
+        if row_index < num_rows - 1:
+            actions.append(MOVE_SOUTH)
+
+    return actions
+
+
+def compute_lawnmower_energy(env: CalderaEnv) -> int:
+    num_cols = len(env.x_grid_coords)
+    num_rows = len(env.y_grid_coords)
+    samples = num_rows * num_cols
+    horizontal_moves = num_rows * (num_cols - 1)
+    vertical_moves = num_rows - 1
+    return samples + horizontal_moves + vertical_moves
+
+
+def main_lawnmower():
+    dim_x = 100
+    dim_y = 100
+    sampling_res = 10
+    initial_position = (0, 0)
+
+    probe_env = CalderaEnv(
+        dim_x=dim_x,
+        dim_y=dim_y,
+        pit_params=DEFAULT_PIT_PARAMS,
+        pit_weights=DEFAULT_PIT_WEIGHTS,
+        sampling_res=sampling_res,
+        initial_position=initial_position,
+    )
+    initial_energy = compute_lawnmower_energy(probe_env)
+
+    caldera_env = CalderaEnv(
+        dim_x=dim_x,
+        dim_y=dim_y,
+        pit_params=DEFAULT_PIT_PARAMS,
+        pit_weights=DEFAULT_PIT_WEIGHTS,
+        sampling_res=sampling_res,
+        initial_position=initial_position,
+        initial_energy=initial_energy,
+    )
+
+    actions = build_lawnmower_actions(caldera_env)
+    total_reward = 0.0
+    counter = 0
+
+    for step_index, action in enumerate(actions, start=1):
+        counter += 1
+        if counter < 100:
+            obs, reward, terminated, truncated, _ = caldera_env.step(action)
+            total_reward += reward
+
+        print(
+            f"Step {step_index}: action={action}, position={tuple(obs['position'])}, "
+            f"reward={reward:.2f}, energy={obs['energy']}"
+        )
+
+        if terminated or truncated:
+            print("Episode finished before the full lawn-mowing pattern completed.")
+            break
+
+    print(f"Visited cells: {len(caldera_env.sampled_cells)}")
+    print(f"Total reward: {total_reward:.2f}")
+    print(f"Final position: {tuple(caldera_env.position)}")
+
+    fig, _ = caldera_env.visualize()
+    plt.show()
+
+
+def main():
     sampling_res = 10
     dim_x = 1000
     dim_y = 1000
@@ -26,7 +120,17 @@ def main_1():
         ((300, 150), 8 * sampling_res),
         ((100, 150), 8 * sampling_res),
         ((200, 400), 8 * sampling_res),
-    ]    
+    ]
+
+    
+    # Default parameters for the three pits in the caldera, along with their weights that control how deep they are.
+    #PIT_PARAMS = (
+    #BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.16, sigmay=0.15, mux=0.2, muy=0.2),
+    #BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.18, sigmay=0.2, mux=0.5, muy=0.7),
+    #BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.17, sigmay=0.15, mux=0.6, muy=0.3),
+    #BivariateNormalStruct(x=0.0, y=0.0, sigmax=0.2, sigmay=0.2, mux=0.9, muy=0.1),
+    #)
+    #PIT_WEIGHTS = (16000.0, 22000.0, 18000.0, 50000.0)
 
     caldera_env = CalderaEnv(
         dim_x=dim_x,
@@ -73,7 +177,7 @@ def main_1():
     plt.show()
 
 
-def main_2():
+def main_stochastic():
     sampling_res = 10
     dim_x = 100
     dim_y = 100
@@ -108,7 +212,7 @@ def main_2():
     plt.show()
 
 
-def main_3():
+def main_test_all():
     sampling_res = 5
     dim_x = 100
     dim_y = 100
@@ -209,6 +313,18 @@ def main_3():
     plt.show()
 
 
+
+def visualize_default_caldera_with_grid_lines():
+    caldera_env = CalderaEnv(initial_position=(60, 20), sampling_res=10)
+
+    fig, _ = caldera_env.visualize(show_grid_lines=True)
+    plt.show()
  
+ 
+
 if __name__ == "__main__":
-    main_1()
+    test_pocaldera_env_get_invariant_information_raises_attribute_error()
+
+    #main_stochastic()
+    #main_test_all()    
+    #visualize_default_caldera_with_grid_lines()
