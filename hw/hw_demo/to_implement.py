@@ -7,8 +7,13 @@ class AGymEnv(gym.Env):
     def __init__(self, a_string: str):
         self.a_string = a_string
 
-        #TODO initialize the observation space
-        self.observation_space = ...
+        self.observation_space = gym.spaces.Dict(
+            {
+                "position": gym.spaces.Box(low=0, high=4, shape=(2,), dtype=int),
+                "energy": gym.spaces.Discrete(21),
+                "sampled_here": gym.spaces.Discrete(2),
+            }
+        )
 
         #TODO initialize the action space
         self.action_space = ...
