@@ -1,4 +1,4 @@
-![Course Banner](images/banner.png)
+![Course Banner](images/PARLAI-logo.jpg)
 
 # Planning and Reinforcement Learning in AI Systems  
 **Course ID:** 02360765  
