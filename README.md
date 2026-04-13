@@ -1,3 +1,5 @@
+![Course Banner](images/banner.png)
+
 # Planning and Reinforcement Learning in AI Systems  
 **Course ID:** 02360765  
 
