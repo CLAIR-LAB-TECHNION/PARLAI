@@ -13,3 +13,6 @@ These are instructions on how to install and use the SASE client, which is requi
 
 ## [SLURM Documentation](https://slurm.schedmd.com/documentation.html)
 This is the official documentation website for SLURM, the workload manager used on the Lambda servers.
+
+## [Miniforge Anaconda Repo](https://github.com/conda-forge/miniforge)
+This is the official GitHub repository for the open-source Anaconda alternative Miniforge.
