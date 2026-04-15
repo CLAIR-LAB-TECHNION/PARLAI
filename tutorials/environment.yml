@@ -1,4 +1,4 @@
-name: parlai-hw
+name: parlai-tut
 channels:
   - conda-forge
 dependencies:
