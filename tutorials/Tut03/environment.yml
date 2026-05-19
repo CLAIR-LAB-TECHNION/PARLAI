@@ -1,0 +1,25 @@
+name: parlai-tut03
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - jupyterlab
+  - python=3.8
+  - scikit-learn
+  - pytorch
+  - matplotlib
+  - tensorboard
+  - torchvision
+  - tqdm
+  - ipywidgets
+  - libglu
+  - ffmpeg
+  - git
+  - pip
+  - pip:
+    - git+https://github.com/sarah-keren/AI_agents
+    - pettingzoo[mpe]==1.17.0
+    - gym==0.23.1
+    - pyglet==1.5.27
+    - mediapy
