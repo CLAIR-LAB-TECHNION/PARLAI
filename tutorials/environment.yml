@@ -4,6 +4,15 @@ channels:
 dependencies:
   - python=3.12
   - jupyterlab
+  - jupyterlab-slideshow
+  - ipywidgets
   - ipykernel
   - matplotlib
+  - mediapy
+  - ffmpeg
   - gymnasium
+  - pip
+  - pip:
+      - pddlgym
+      - unified-planning[fast-downward]
+      - git+https://github.com/guyazran/jupyter-timeout
