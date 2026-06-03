@@ -10,9 +10,13 @@ dependencies:
   - matplotlib
   - mediapy
   - ffmpeg
+  - tqdm
   - gymnasium
+  - gymnasium-classic_control
+  - gymnasium-box2d
   - pip
   - pip:
       - pddlgym
+      - gymcts
       - unified-planning[fast-downward]
       - git+https://github.com/guyazran/jupyter-timeout
