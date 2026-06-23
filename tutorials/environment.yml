@@ -16,6 +16,7 @@ dependencies:
   - gymnasium-box2d
   - gymnasium-toy_text
   - pip
+  - pytorch
   - pip:
       - pddlgym
       - gymcts
