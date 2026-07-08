@@ -6,7 +6,7 @@ dependencies:
   - jupyterlab
   - jupyterlab-slideshow
   - ipywidgets
-  - ipykernel
+  - ipykernel<7  # prevent race condition between subshell and @interact
   - matplotlib
   - mediapy
   - ffmpeg
