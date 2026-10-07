@@ -1,0 +1,8 @@
+AI tools used in this project
+
+Write one line for each tool you used. Say what you used it for and in which parts.
+If you did not use any AI tool, write "None".
+
+Tool:
+Used for:
+Parts:
